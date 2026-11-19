@@ -13,7 +13,7 @@ from . import settings
 from .audit import audit
 from .auth import current_user, require
 from .business_day import assert_day_open, current_business_date
-from .errors import BusinessError, NotFoundError, ValidationError
+from .errors import BusinessError, DuplicateError, NotFoundError, ValidationError
 from .sales import PAYMENT_MODES
 
 
@@ -38,12 +38,17 @@ def _validate(s, d: date, category: str, amount, mode: str) -> tuple[date, Decim
 
 
 def add_expense(category: str, amount, *, description: str = "", payment_mode: str = "CASH",
-                notes: str = "", expense_date: date | None = None) -> int:
+                notes: str = "", expense_date: date | None = None, client_ref: str | None = None) -> int:
     require("expenses")
     with session_scope() as s:
+        if client_ref:
+            dup = s.scalar(select(Expense.id).where(Expense.client_ref == client_ref))
+            if dup is not None:
+                raise DuplicateError("This expense was already saved.")
         d, amt = _validate(s, expense_date, category, amount, payment_mode)
         e = Expense(business_date=d, category=category.strip(), description=(description or "").strip(), amount=amt,
-                    payment_mode=payment_mode, notes=(notes or "").strip(), created_by=current_user().id)
+                    payment_mode=payment_mode, notes=(notes or "").strip(), created_by=current_user().id,
+                    client_ref=client_ref)
         s.add(e)
         s.flush()
         audit(s, "EXPENSE_ADDED", "expense", e.id, {"category": e.category, "amount": amt, "date": d})

@@ -236,7 +236,11 @@ def apply_movement(session, product: Product, qty_change: int, mtype: str, *, bu
     old_qty = product.quantity or 0
     new_qty = old_qty + qty_change
     if new_qty < 0 and not allow_negative:
-        raise InsufficientStockError(product.name, old_qty, -qty_change)
+        from . import syncctx
+        entry = syncctx.current()
+        if entry is None:
+            raise InsufficientStockError(product.name, old_qty, -qty_change)
+        entry.negative_stock.append((product.name, new_qty))
     avg = D(product.avg_cost or 0)
     if qty_change > 0:
         cost = D(unit_cost) if unit_cost is not None else avg

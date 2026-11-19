@@ -5,6 +5,7 @@ and exposed to Python as decimal.Decimal rupees.
 """
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from pathlib import Path
@@ -88,6 +89,10 @@ class _DB:
 
 _db = _DB()
 
+# One unit of work at a time inside this program. The screens and the phone-sync service run in different
+# threads; taking this (re-entrant) lock for every session keeps SQLite free of "database is locked" errors.
+db_lock = threading.RLock()
+
 
 def _configure_sqlite(engine: Engine) -> None:
     @event.listens_for(engine, "connect")
@@ -119,7 +124,21 @@ def init_engine(path: str | Path) -> Engine:
     return engine
 
 
+_dispose_hooks: list = []
+
+
+def on_dispose(fn) -> None:
+    """Call *fn* before the database is closed (e.g. to close a watcher connection before a restore)."""
+    if fn not in _dispose_hooks:
+        _dispose_hooks.append(fn)
+
+
 def dispose_engine() -> None:
+    for fn in list(_dispose_hooks):
+        try:
+            fn()
+        except Exception:  # pragma: no cover - a hook must never block closing the database
+            pass
     if _db.engine is not None:
         _db.engine.dispose()
     _db.engine = None
@@ -139,14 +158,15 @@ def current_db_path() -> Path | None:
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """One atomic unit of work: commits on success, rolls back on any error."""
-    if _db.factory is None:
-        raise RuntimeError("Database is not initialised")
-    session: Session = _db.factory()
-    try:
-        yield session
-        session.commit()
-    except BaseException:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    with db_lock:
+        if _db.factory is None:
+            raise RuntimeError("Database is not initialised")
+        session: Session = _db.factory()
+        try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+        finally:
+            session.close()

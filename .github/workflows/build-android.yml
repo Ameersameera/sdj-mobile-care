@@ -1,0 +1,82 @@
+name: Build Android app
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Use JDK 17
+        run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+
+      - name: PC code needed for the phone checks
+        run: pip install "SQLAlchemy>=2,<3" "cryptography>=42" "reportlab>=4" "matplotlib>=3.8" "openpyxl>=3.1"
+
+      - name: Unit tests (bill maths vs PC, encryption, offline entries, screens)
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
+
+      - name: The PC accepts what the phone sends
+        run: python android/tools/check_phone_ops.py android/build/test-out
+
+      - name: Build the signed APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name the APK
+        id: apk
+        run: |
+          VER=$(python -c "import re;print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"',open('sdj/__init__.py').read()).group(1))")
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/SDJMobileCare-Phone-$VER.apk"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SDJMobileCare-Phone-APK
+          path: out/*.apk
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: phone-screens-and-test-reports
+          path: |
+            android/build/test-out/shots/*.png
+            android/app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Keep the screen pictures for review (branch ci-phone-shots, not on main)
+        if: always() && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+        run: |
+          [ -d android/build/test-out/shots ] || exit 0
+          cd android/build/test-out/shots
+          git init -q && git checkout -q -b ci-phone-shots
+          git add ./*.png && git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "phone screens $GITHUB_SHA"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-phone-shots
+
+      - name: Add the APK to GitHub Releases
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.apk.outputs.version }}"
+          for i in $(seq 1 40); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" out/*.apk --clobber && exit 0
+            elif gh release create "$TAG" out/*.apk --target "$GITHUB_SHA" --title "SDJ Mobile Care $TAG" --notes-file docs/RELEASE_NOTES.md; then
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1

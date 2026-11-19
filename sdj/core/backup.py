@@ -121,14 +121,15 @@ def restore_backup(src: str | Path) -> Path:
             log.warning("safety backup failed (%s); keeping raw copy", exc)
             safety = backups_dir() / f"SDJ_backup_{datetime.now():%Y%m%d_%H%M%S}_raw_pre_restore.db"
             shutil.copy2(live, safety)
-    base.dispose_engine()
-    for suffix in ("-wal", "-shm", "-journal"):
-        Path(str(live) + suffix).unlink(missing_ok=True)
-    tmp = live.with_suffix(".restoring")
-    shutil.copy2(src, tmp)
-    os.replace(tmp, live)
-    open_database(live)
-    settings.clear_cache()
+    with base.db_lock:                       # no phone sync may write while the file is swapped
+        base.dispose_engine()
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(str(live) + suffix).unlink(missing_ok=True)
+        tmp = live.with_suffix(".restoring")
+        shutil.copy2(src, tmp)
+        os.replace(tmp, live)
+        open_database(live)
+        settings.clear_cache()
     log.info("Database restored from %s (safety copy: %s)", src, safety)
     return safety or live
 

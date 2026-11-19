@@ -117,7 +117,7 @@ class SettingsPage(Page):
         u = current_user()
         self.admin = u.can("settings")
         self.tabs = QTabWidget()
-        self.tabs.tabBar().setStyleSheet("QTabBar::tab { padding: 8px 11px; margin-right: 2px; }")  # 12 tabs fit
+        self.tabs.tabBar().setStyleSheet("QTabBar::tab { padding: 8px 9px; margin-right: 2px; }")  # 13 tabs fit
         self.root.addWidget(self.tabs, 1)
         self.tab_index = {}
         if self.admin:
@@ -128,6 +128,10 @@ class SettingsPage(Page):
             self._backup_tab()
         if self.admin and current_user().role == "ADMIN":
             self._reset_tab()
+        if self.admin:
+            from ..phone_link import PhoneLinkTab
+            self.phone_tab = PhoneLinkTab(self)
+            self._add("phone", self.phone_tab, "Phone link")
         if self.admin:
             self._stock_tab()
             self._categories_tab()

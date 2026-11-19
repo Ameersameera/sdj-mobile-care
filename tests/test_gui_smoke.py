@@ -383,3 +383,47 @@ def test_staff_gets_owner_approval_to_cancel(gui, make_product, monkeypatch):
     settings.set_value("owner_approval", False)
     s2 = sales.create_sale([CartItem(c, 1, Dec("400"))], payments={"CASH": Dec("400")})
     assert SaleDetailDialog(win, s2["id"]).cancel_btn.isHidden()
+
+
+def test_phone_link_tab_code_qr_devices_and_alerts(gui, make_product, monkeypatch):
+    win, msgs, app = gui
+    from sdj.core import phonesync, syncserver
+    from sdj.ui.phone_link import SyncAlertsDialog, start_bridge
+    monkeypatch.setattr(phonesync, "PORT", 0)
+    start_bridge()
+    win.navigate("settings")
+    page = win.pages["settings"]
+    page.tabs.setCurrentIndex(page.tab_index["phone"])
+    tab = page.phone_tab
+    tab.unlock_pw.setText("wrong")
+    tab.unlock()
+    assert tab.content is None                               # password needed
+    assert msgs and "password" in msgs[-1][1][2]
+    msgs.clear()
+    tab.unlock_pw.setText("admin123")
+    tab.unlock()
+    app.processEvents()
+    assert tab.stack.currentWidget() is tab.content
+    monkeypatch.setattr(syncserver, "_service", syncserver.SyncServer(port=0, udp_port=0, host="127.0.0.1"))
+    tab.create_code()
+    app.processEvents()
+    assert tab.code_box.isVisible() and len(tab.code_lbl.text()) == 11 and tab.qr.matrix
+    assert syncserver.service().running
+    # a phone links and sends a bill that conflicts with nothing but lands on a closed day → alert
+    from test_phone_sync import FakePhone
+    ch = make_product("Charger", "Chargers", 250, 400, qty=10)
+    phone = FakePhone()
+    phone.pair(tab.code_lbl.text())
+    phone.sync(full=True)
+    closing.close_day(date.today(), 0, make_pdf=False, make_backup=False)
+    phone.sync([phone.bill([dict(p=ch, q=1, price=40000)], {"CASH": 40000})])
+    app.processEvents()
+    tab.refresh()
+    assert tab.dev_table.rows()[0]["series"] == "P1"
+    assert "1 open alert" in tab.alert_lbl.text()
+    dlg = SyncAlertsDialog(win)
+    assert dlg.table.rows()[0]["kind"] == "CLOSED_DAY"
+    win.update_header()
+    assert not win.phone_pill.isHidden()
+    syncserver.service().stop()
+    assert _errors(msgs) == []

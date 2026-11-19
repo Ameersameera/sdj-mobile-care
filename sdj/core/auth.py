@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,12 +63,13 @@ class CurrentUser:
 
 
 SYSTEM_USER = CurrentUser(None, "system", "System", "ADMIN", set(ALL_PERMISSIONS))
-_current: CurrentUser = SYSTEM_USER
-_approver: CurrentUser | None = None
+_current: CurrentUser = SYSTEM_USER          # who is signed in on this computer
+_local = threading.local()                   # per-thread override: approvals, entries arriving from a phone
 
 
 def current_user() -> CurrentUser:
-    return _current
+    u = getattr(_local, "user", None)
+    return u if u is not None else _current
 
 
 def set_current_user(user: CurrentUser | None) -> None:
@@ -76,26 +78,45 @@ def set_current_user(user: CurrentUser | None) -> None:
 
 
 def require(perm: str) -> None:
-    if not _current.can(perm):
+    if not current_user().can(perm):
         raise PermissionDenied(perm=perm)
 
 
 def approved_by() -> CurrentUser | None:
     """The owner / manager who approved the action now running, if any."""
-    return _approver
+    return getattr(_local, "approver", None)
+
+
+@contextmanager
+def _override(user: CurrentUser, approver: CurrentUser | None):
+    saved = getattr(_local, "user", None), getattr(_local, "approver", None)
+    _local.user, _local.approver = user, approver
+    try:
+        yield
+    finally:
+        _local.user, _local.approver = saved
 
 
 @contextmanager
 def approved(approver: CurrentUser, perms: set[str] | list[str]):
     """Run an action with extra permissions that an owner / manager just approved with their password."""
-    global _current, _approver
-    saved, saved_approver = _current, _approver
-    _current = CurrentUser(saved.id, saved.username, saved.full_name, saved.role, set(saved.permissions) | set(perms))
-    _approver = approver
-    try:
+    cur = current_user()
+    with _override(CurrentUser(cur.id, cur.username, cur.full_name, cur.role, set(cur.permissions) | set(perms)),
+                   approver):
         yield
-    finally:
-        _current, _approver = saved, saved_approver
+
+
+@contextmanager
+def acting_as(user: CurrentUser):
+    """Run code in this thread as *user* (used when a linked phone's entries are saved on the PC)."""
+    with _override(user, None):
+        yield
+
+
+def user_by_id(user_id: int) -> CurrentUser | None:
+    with session_scope() as s:
+        u = s.get(User, user_id)
+        return _to_current(u) if u is not None else None
 
 
 # ---------------------------------------------------------------- hashing
@@ -158,9 +179,9 @@ def verify_approver(username: str, password: str, perm: str) -> CurrentUser:
         if not cu.can(perm):
             raise BusinessError(f"{cu.display_name} is not allowed to {PERMISSION_LABELS.get(perm, perm)} either. "
                                 "Ask the owner.")
-        if cu.id == _current.id:
+        if cu.id == current_user().id:
             raise BusinessError("Someone else (the owner or a manager) has to approve this.")
-        audit(s, "APPROVAL_GIVEN", "user", u.id, {"approver": u.username, "for_user": _current.username,
+        audit(s, "APPROVAL_GIVEN", "user", u.id, {"approver": u.username, "for_user": current_user().username,
                                                   "action": perm})
         return cu
 

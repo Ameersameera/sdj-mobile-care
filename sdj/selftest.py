@@ -65,6 +65,33 @@ def run_self_test() -> int:
         from .output.excel_export import render_report_excel
         render_report_excel(rep, tmp / "closing.xlsx")
         ok("Excel export")
+        # ---- phone link: pair a phone and sync it through the real network service
+        import base64
+        import json
+        import urllib.request
+        from .core import phonesync
+        from .core.syncserver import SyncServer
+        code = phonesync.new_link_code(auth.current_user().id)["code"]
+        pc = phonesync.pc_identity()
+        k = phonesync.pair_key(code, pc)
+        env = phonesync.seal(k, {"name": "self-test phone", "hello": "x", "app": "selftest"}, b"pair")
+        env["pc"] = pc
+        srv = SyncServer(port=0, udp_port=0, host="127.0.0.1")
+        assert srv.start(), srv.error
+        try:
+            def post(path, body):
+                req = urllib.request.Request(f"http://127.0.0.1:{srv.port}{path}", data=json.dumps(body).encode(),
+                                             headers={"Content-Type": "application/json"})
+                return json.loads(urllib.request.urlopen(req, timeout=30).read())
+            ans = phonesync.unseal(k, post("/sdj/pair", env), b"pair")
+            key, dev = base64.b64decode(ans["key"]), ans["device"]
+            e2 = phonesync.seal(key, {"seq": 1, "ops": [], "full": True, "app": "selftest"}, dev.encode())
+            e2["d"] = dev
+            got = phonesync.unseal(key, post("/sdj/sync", e2), dev.encode())
+            assert got["data"]["products"], "phone sync sent no products"
+        finally:
+            srv.stop()
+        ok("phone link: one-time code pairing + encrypted sync over the network service")
         try:
             from PySide6.QtPdf import QPdfDocument  # noqa: F401
             ok("Qt PDF preview module available")

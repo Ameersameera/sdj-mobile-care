@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..db.base import D, q2, session_scope
 from ..db.models import Customer, ImeiRecord, Payment, Product, Sale, SaleItem, SaleReturn
-from . import settings
+from . import settings, syncctx
 from .audit import audit
 from .auth import current_user, require
 from .business_day import assert_day_open, current_business_date
@@ -78,13 +78,16 @@ def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_disc
     if cust is None:
         cust = s.get(Customer, walk_in_customer_id(s))
 
+    phone = syncctx.current()       # entry made on a linked phone (it may have been offline for days)
     products: dict[int, Product] = {}
     needed: dict[int, int] = defaultdict(int)
     imei_recs: dict[int, ImeiRecord] = {}
     for it in items:
         p = products.get(it.product_id) or s.get(Product, it.product_id)
-        if p is None or not p.is_active:
+        if p is None or (not p.is_active and phone is None):
             raise ValidationError("A product in the bill is not available any more.")
+        if not p.is_active and p.name not in phone.inactive_products:
+            phone.inactive_products.append(p.name)
         products[p.id] = p
         it.quantity = int(it.quantity)
         if it.quantity <= 0:
@@ -94,18 +97,24 @@ def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_disc
         if D(it.discount) < 0 or q2(it.discount) > q2(D(it.unit_price) * it.quantity):
             raise ValidationError(f"Discount for '{p.name}' cannot be more than the item amount.")
         if p.track_imei:
-            if it.quantity != 1 or not it.imei_record_id:
+            if it.quantity != 1 or not (it.imei_record_id or (phone is not None and (it.imei_text or "").strip())):
                 raise ValidationError(f"Select the IMEI / serial number for '{p.name}' (one line per phone).")
-            rec = s.get(ImeiRecord, it.imei_record_id)
+            rec = s.get(ImeiRecord, it.imei_record_id) if it.imei_record_id else None
             if rec is None or rec.product_id != p.id or rec.status != "IN_STOCK":
-                raise ValidationError(f"IMEI selected for '{p.name}' is not in stock any more.")
-            if rec.id in imei_recs:
+                if phone is None:
+                    raise ValidationError(f"IMEI selected for '{p.name}' is not in stock any more.")
+                # sold on the PC meanwhile: keep the phone's bill, IMEI as text only, and alert the owner
+                text_ = (it.imei_text or (rec.imei1 if rec else "")).strip()
+                phone.imei_conflicts.append((text_, p.name))
+                it.imei_record_id, it.imei_text = None, text_
+            elif rec.id in imei_recs:
                 raise ValidationError(f"IMEI {rec.imei1} is added twice in this bill.")
-            imei_recs[rec.id] = rec
+            else:
+                imei_recs[rec.id] = rec
         needed[p.id] += it.quantity
     for pid, qty in needed.items():
         p = products[pid]
-        if p.quantity < qty:
+        if p.quantity < qty and phone is None:
             from .errors import InsufficientStockError
             raise InsufficientStockError(p.name, p.quantity, qty)
 

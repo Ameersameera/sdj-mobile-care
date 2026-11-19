@@ -1,6 +1,6 @@
 # Test results – SDJ Mobile Care
 
-**Result: 76 passed in 96.03s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
+**Result: 87 passed in 111.38s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
 
 Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 
@@ -95,6 +95,21 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_staff_cancel_needs_approval_and_it_is_audited` | Staff cancel needs owner approval for that one action; the audit log records who approved |
 | ✅ PASSED | `test_staff_discount_limit` | Staff discounts above the limit need approval; the owner has no limit; 0 = no limit |
 
+## Phone link & sync (no cloud)  (`test_phone_sync.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_pairing_is_one_time_and_needs_the_right_code` | A phone links only with the right one-time code; the code works once |
+| ✅ PASSED | `test_full_sync_sends_shop_data` | First sync sends products, stock, IMEIs, dues, bills, jobs, expenses; never invents address / GSTIN; idle syncs send nothing |
+| ✅ PASSED | `test_phone_bill_is_saved_exactly_once` | A phone bill is saved once even when the phone resends it; old requests are refused |
+| ✅ PASSED | `test_last_piece_and_imei_sold_on_both_sides` | Last piece / same IMEI sold on PC and phone: the bill is kept and the owner gets alerts |
+| ✅ PASSED | `test_entry_for_a_closed_day_asks_to_update_the_closing` | An entry for a closed day keeps its date; 'Update closing' recalculates that day |
+| ✅ PASSED | `test_bill_changed_on_pc_and_phone_becomes_a_conflict` | A bill changed on both sides becomes an alert; 'Use phone version' applies it |
+| ✅ PASSED | `test_phone_can_edit_and_cancel_its_own_bills_before_syncing` | Bills made, edited and cancelled on the phone before syncing all land correctly |
+| ✅ PASSED | `test_expense_customer_payment_and_repair_job` | Phone expense, dues payment (extra amount alerted) and a full repair job flow |
+| ✅ PASSED | `test_removed_phone_cannot_sync` | Remove phone needs the owner's password and stops that phone at once |
+| ✅ PASSED | `test_network_service_hello_sync_and_discovery` | The real network service: hello, encrypted sync over HTTP and Wi-Fi discovery |
+
 ## Desktop interface (offscreen GUI tests)  (`test_gui_smoke.py`)
 
 | Result | Test | What it proves |
@@ -115,3 +130,14 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_reset_tab_rules_preview_and_run` | Settings → Reset: tick rules, preview and a confirmed reset through the real screen |
 | ✅ PASSED | `test_billing_edit_mode_keeps_the_invoice_number` | Sales History → Edit bill opens the bill in Billing; saving keeps the invoice number |
 | ✅ PASSED | `test_staff_gets_owner_approval_to_cancel` | Staff cancel works with owner approval; the button hides when approval is switched off |
+| ✅ PASSED | `test_phone_link_tab_code_qr_devices_and_alerts` | Settings → Phone link: password lock, one-time code + QR, linked phones and alerts |
+
+## Android phone app  (`android/`, run by GitHub Actions on every push)
+
+| Result | Check | What it proves |
+|---|---|---|
+| ✅ PASSED | `CalcTest` | 400 bills computed by the PC code give the same paise on the phone (GST incl. / excl., discounts, round off, amount in words) |
+| ✅ PASSED | `CryptoTest` | PC password hashes, the pairing key and encrypted envelopes work in both directions (Tamil text too) |
+| ✅ PASSED | `RepoTest` | Offline bills, edit, cancel, expense, dues payment and a repair job update stock, dues and today's figures; the sync request holds every entry once |
+| ✅ PASSED | `ScreensTest` | All 15 phone screens are drawn with the sample shop |
+| ✅ PASSED | `check_phone_ops.py` | The PC code replays the phone's sync request and accepts all 7 entries with exactly the same totals |

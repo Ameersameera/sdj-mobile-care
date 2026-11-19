@@ -1,0 +1,27 @@
+{
+ "device": "0c3213691a89479eaa7865069a817397",
+ "key": "G7WTOYIBIT0FiZ7OxC8Ra2x+GIo6AhGcuV7p9NUXLME=",
+ "no": 1,
+ "pc": "e97ae30e2df9664b65301c6289834b83",
+ "shop": "SDJ Mobile Care",
+ "user": {
+  "id": 1,
+  "username": "admin",
+  "name": "Shop Owner",
+  "role": "ADMIN"
+ },
+ "seq": 1,
+ "token": "9069fb78:2:2026-11-19",
+ "hashes": {
+  "categories": "20aec768571dd69d",
+  "products": "3736d1656b802c2f",
+  "imeis": "dfe20dd015710fc6",
+  "customers": "fb08bbd877d757b2",
+  "sales": "503d55c32493efb8",
+  "jobs": "8e4530f39bc9f1f5",
+  "expenses": "1d3a4183730701e6",
+  "dash": "f4b7fc23b2273ba4",
+  "shop": "31ec3e0f3fba441c",
+  "users": "47ef2d453b35a595"
+ }
+}
