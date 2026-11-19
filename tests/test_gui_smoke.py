@@ -250,3 +250,51 @@ def test_customer_dues_collection_screen(gui, make_product):
     assert page.k_dues.value.text() == "₹1,500.00"
     page.dues_only.setChecked(True)
     assert len(page.table.visible_rows()) == 1
+
+
+def test_settings_categories_tab_add_hide_show(gui, monkeypatch):
+    win, msgs, app = gui
+    win.navigate("settings")
+    page = win.pages["settings"]
+    page.open_with({"tab": "categories"})
+    page.refresh()
+    app.processEvents()
+    assert page.tabs.currentIndex() == page.tab_index["categories"]
+    from sdj.ui.dialogs import CategoryDialog
+    dlg = CategoryDialog(page, group="SPARE")
+    dlg.name.setText("Back Panels")
+    dlg._accept()
+    assert dlg.result_id and dlg.result() == QDialog.Accepted
+    page.refresh_categories()
+    rows = {r["name"]: r for r in page.c_table.visible_rows()}
+    assert rows["Back Panels"]["group"] == "SPARE" and rows["Back Panels"]["status"] == "Active"
+    monkeypatch.setattr(page.c_table, "selected", lambda: rows["Back Panels"])
+    page.toggle_category()
+    assert "Back Panels" not in {r["name"] for r in page.c_table.visible_rows()}
+    page.c_hidden.setChecked(True)
+    hidden = {r["name"]: r for r in page.c_table.visible_rows()}
+    assert hidden["Back Panels"]["status"] == "Hidden"
+    monkeypatch.setattr(page.c_table, "selected", lambda: hidden["Back Panels"])
+    page.toggle_category()
+    assert inventory.get_category(dlg.result_id)["is_active"] is True
+    assert _errors(msgs) == []
+
+
+def test_product_dialog_plus_button_adds_category(gui):
+    win, msgs, app = gui
+    from sdj.ui.dialogs import CategoryDialog, ProductDialog
+    pd = ProductDialog(win, group="SPARE")
+    assert not pd.cat_add.isHidden()
+    assert pd.category.currentData()["group"] == "SPARE"
+    cd = CategoryDialog(pd, group=pd.category.currentData()["group"])
+    cd.name.setText("Back Glass")
+    cd._accept()
+    pd.category_added(cd.result_id)
+    assert pd.category.currentData()["name"] == "Back Glass"
+    pd.name.setText("Back glass – Redmi 13C")
+    pd.purchase.set_d(150)
+    pd.selling.set_d(350)
+    pd._accept()
+    assert _errors(msgs) == []
+    p = [x for x in inventory.list_products() if x["name"] == "Back glass – Redmi 13C"][0]
+    assert p["category_id"] == cd.result_id

@@ -1,9 +1,9 @@
-; Inno Setup script – creates SDJMobileCare_Setup_1.0.0.exe
+; Inno Setup script – creates SDJMobileCare_Setup_1.1.0.exe
 ; Build the app first (pyinstaller --noconfirm sdj_mobile_care.spec), then compile this file with Inno Setup 6.
 ; Shop data lives in %LOCALAPPDATA%\SDJ Mobile Care – uninstalling the app never deletes it.
 
 #define MyAppName "SDJ Mobile Care"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppExeName "SDJMobileCare.exe"
 
 [Setup]

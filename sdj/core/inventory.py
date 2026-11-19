@@ -30,32 +30,108 @@ INBOUND_TYPES = {"OPENING", "PURCHASE", "SALE_CANCEL", "SALE_RETURN", "SERVICE_R
 
 
 # ---------------------------------------------------------------- categories
-def list_categories(group: str | None = None, active_only: bool = True) -> list[dict]:
+GROUP_ORDER = {"MOBILE": 0, "ACCESSORY": 1, "SPARE": 2}
+
+
+def _cdict(c: Category, products: int = 0) -> dict:
+    return dict(id=c.id, name=c.name, group=c.group, group_label=GROUP_LABELS[c.group], requires_imei=c.requires_imei,
+                is_active=c.is_active, products=products)
+
+
+def list_categories(group: str | None = None, active_only: bool = True, with_counts: bool = False) -> list[dict]:
+    """Categories grouped Mobile → Accessories → Spare parts; user-added ones come last in their group."""
     with session_scope() as s:
-        q = select(Category).order_by(Category.sort_order, Category.name)
+        q = select(Category)
         if group:
             q = q.where(Category.group == group)
         if active_only:
             q = q.where(Category.is_active.is_(True))
-        return [dict(id=c.id, name=c.name, group=c.group, group_label=GROUP_LABELS[c.group],
-                     requires_imei=c.requires_imei) for c in s.scalars(q)]
+        cats = sorted(s.scalars(q), key=lambda c: (GROUP_ORDER.get(c.group, 9), c.sort_order, c.name.lower()))
+        counts = {}
+        if with_counts:
+            counts = dict(s.execute(select(Product.category_id, func.count(Product.id)).group_by(Product.category_id)).all())
+        return [_cdict(c, counts.get(c.id, 0)) for c in cats]
+
+
+def get_category(category_id: int) -> dict:
+    with session_scope() as s:
+        c = s.get(Category, category_id)
+        if c is None:
+            raise NotFoundError("Category not found.")
+        used = s.scalar(select(func.count(Product.id)).where(Product.category_id == c.id)) or 0
+        return _cdict(c, used)
+
+
+def _check_category_name(session, name: str, exclude_id: int | None = None) -> str:
+    name = " ".join((name or "").split())
+    if not name:
+        raise ValidationError("Category name is required.")
+    if len(name) > 60:
+        raise ValidationError("Category name is too long (maximum 60 characters).")
+    q = select(Category).where(func.lower(Category.name) == name.lower())
+    if exclude_id:
+        q = q.where(Category.id != exclude_id)
+    other = session.scalar(q)
+    if other is not None:
+        if not other.is_active:
+            raise ValidationError(f"A hidden category named '{other.name}' already exists. "
+                                  "Show it again in Settings → Categories instead.")
+        raise ValidationError(f"A category named '{other.name}' already exists.")
+    return name
 
 
 def add_category(name: str, group: str, requires_imei: bool = False) -> int:
     require("products_edit")
-    name = (name or "").strip()
-    if not name:
-        raise ValidationError("Category name is required.")
     if group not in GROUP_LABELS:
         raise ValidationError("Choose a valid category group.")
     with session_scope() as s:
-        if s.scalar(select(Category).where(func.lower(Category.name) == name.lower())):
-            raise ValidationError("A category with this name already exists.")
-        c = Category(name=name, group=group, requires_imei=requires_imei, sort_order=999)
+        name = _check_category_name(s, name)
+        c = Category(name=name, group=group, requires_imei=bool(requires_imei), sort_order=999)
         s.add(c)
         s.flush()
-        audit(s, "CATEGORY_CREATED", "category", c.id, {"name": name, "group": group})
+        audit(s, "CATEGORY_CREATED", "category", c.id, {"name": name, "group": group, "imei": bool(requires_imei)})
         return c.id
+
+
+def update_category(category_id: int, name: str, group: str, requires_imei: bool) -> None:
+    """Rename / change IMEI default. The group can only change while no product uses the category,
+    so old bills and reports never move between Mobile / Accessories / Spare parts."""
+    require("products_edit")
+    if group not in GROUP_LABELS:
+        raise ValidationError("Choose a valid category group.")
+    with session_scope() as s:
+        c = s.get(Category, category_id)
+        if c is None:
+            raise NotFoundError("Category not found.")
+        name = _check_category_name(s, name, exclude_id=c.id)
+        if group != c.group:
+            used = s.scalar(select(func.count(Product.id)).where(Product.category_id == c.id)) or 0
+            if used:
+                raise ValidationError(f"{used} product(s) already use '{c.name}', so its group can't be changed. "
+                                      "Add a new category in the other group instead.")
+        before = {"name": c.name, "group": c.group, "imei": c.requires_imei}
+        c.name, c.group, c.requires_imei = name, group, bool(requires_imei)
+        after = {"name": c.name, "group": c.group, "imei": c.requires_imei}
+        if before != after:
+            audit(s, "CATEGORY_UPDATED", "category", c.id, {"before": before, "after": after})
+
+
+def set_category_active(category_id: int, active: bool) -> None:
+    """Hide (or show again) a category. Categories are never deleted: products keep their category,
+    only new products can't pick a hidden one."""
+    require("products_edit")
+    with session_scope() as s:
+        c = s.get(Category, category_id)
+        if c is None:
+            raise NotFoundError("Category not found.")
+        if c.is_active == bool(active):
+            return
+        if not active:
+            others = s.scalar(select(func.count(Category.id)).where(Category.is_active.is_(True), Category.id != c.id))
+            if not others:
+                raise ValidationError("At least one category must stay visible.")
+        c.is_active = bool(active)
+        audit(s, "CATEGORY_SHOWN" if active else "CATEGORY_HIDDEN", "category", c.id, {"name": c.name})
 
 
 # ---------------------------------------------------------------- IMEI helpers
@@ -199,6 +275,11 @@ def _clean_product(session, data: dict, product_id: int | None) -> dict:
     cat = session.get(Category, d.get("category_id")) if d.get("category_id") else None
     if cat is None:
         raise ValidationError("Please choose a category.")
+    if not cat.is_active:
+        current = session.get(Product, product_id) if product_id else None
+        if current is None or current.category_id != cat.id:
+            raise ValidationError(f"The category '{cat.name}' is hidden. Choose another one, or show it again in "
+                                  "Settings → Categories.")
     for k in ("brand", "model_number", "description", "hsn_code"):
         d[k] = (d.get(k) or "").strip()
     bc = (d.get("barcode") or "").strip()
