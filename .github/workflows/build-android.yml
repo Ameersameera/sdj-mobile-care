@@ -34,6 +34,12 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
 
+      - name: The live phone test really linked and synced with the PC service
+        run: |
+          cat pc_server.log
+          grep -q "event linked" pc_server.log
+          grep -q "event synced" pc_server.log
+
       - name: The PC accepts what the phone sends
         run: python android/tools/check_phone_ops.py android/build/test-out
 

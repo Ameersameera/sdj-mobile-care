@@ -27,6 +27,7 @@ from sdj.db.init_db import open_database  # noqa: E402
 open_database(config.db_path())
 settings.clear_cache()
 auth.set_current_user(auth.authenticate("admin", "admin123"))
+phonesync.subscribe(lambda event, data: print("event", event, data, flush=True))
 info = phonesync.new_link_code(1)
 srv = SyncServer(port=phonesync.PORT, udp_port=phonesync.DISCOVERY_PORT, host="127.0.0.1")
 assert srv.start(), srv.error
