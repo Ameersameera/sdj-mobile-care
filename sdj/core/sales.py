@@ -17,7 +17,7 @@ from .audit import audit
 from .auth import current_user, require
 from .business_day import assert_day_open, current_business_date
 from .calc import LineIn, compute_bill
-from .errors import BusinessError, DuplicateError, NotFoundError, ValidationError
+from .errors import BusinessError, DuplicateError, NotFoundError, PermissionDenied, ValidationError
 from .inventory import apply_movement
 from .numbering import next_invoice_no
 
@@ -65,14 +65,15 @@ def preview_bill(lines: list[LineIn], bill_discount=0):
 
 def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_discount=0,
                  payments: dict | None = None, pay_full_mode: str | None = None, notes: str = "",
-                 client_ref: str | None = None, sale_type: str = "BILL") -> Sale:
+                 client_ref: str | None = None, sale_type: str = "BILL", invoice_no: str | None = None,
+                 business_date: date | None = None) -> Sale:
     if not items:
         raise ValidationError("Add at least one product to the bill.")
     if client_ref:
         dup = s.scalar(select(Sale).where(Sale.client_ref == client_ref))
         if dup is not None:
             raise DuplicateError(f"This bill is already saved as invoice {dup.invoice_no}. It was not saved twice.")
-    bdate = current_business_date(s)
+    bdate = business_date or current_business_date(s)
     cust = s.get(Customer, customer_id) if customer_id else None
     if cust is None:
         cust = s.get(Customer, walk_in_customer_id(s))
@@ -113,6 +114,7 @@ def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_disc
                          for it in items], bill_discount, **flags)
     if q2(bill_discount) < 0 or q2(bill_discount) > calc.gross - calc.item_discount:
         raise ValidationError("Bill discount cannot be more than the bill amount.")
+    _check_discount_limit(calc)
     if pay_full_mode:
         payments = {pay_full_mode: calc.grand_total}
     pay = {m: q2(v) for m, v in (payments or {}).items() if q2(v) > 0}
@@ -130,7 +132,7 @@ def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_disc
 
     prefix = settings.get("invoice_prefix") or "SDJ"
     user = current_user()
-    sale = Sale(invoice_no=next_invoice_no(s, prefix, bdate), client_ref=client_ref, sale_type=sale_type,
+    sale = Sale(invoice_no=invoice_no or next_invoice_no(s, prefix, bdate), client_ref=client_ref, sale_type=sale_type,
                 customer_id=cust.id, customer_name=cust.name, customer_phone=cust.phone, business_date=bdate,
                 gst_enabled=flags["gst_enabled"], price_includes_tax=flags["inclusive"],
                 gross_amount=calc.gross, item_discount=calc.item_discount, bill_discount=calc.bill_discount,
@@ -175,6 +177,17 @@ def _create_sale(s, items: list[CartItem], *, customer_id: int | None, bill_disc
     return sale
 
 
+def _check_discount_limit(calc) -> None:
+    """Staff may give discounts up to the owner's limit; above it an owner / manager has to approve."""
+    limit = D(settings.get("staff_discount_limit") or 0)
+    if limit <= 0 or calc.gross <= 0 or current_user().can("discount_override"):
+        return
+    pct = (calc.item_discount + calc.bill_discount) * 100 / calc.gross
+    if pct > limit:
+        raise PermissionDenied(f"The discount on this bill is {pct:.1f}%, above the {limit:g}% allowed for staff. "
+                               "The owner or a manager has to approve it.", perm="discount_override")
+
+
 def create_sale(items: list[CartItem], *, customer_id: int | None = None, bill_discount=0,
                 payments: dict | None = None, notes: str = "", client_ref: str | None = None,
                 sale_type: str = "BILL", pay_full_mode: str | None = None) -> dict:
@@ -198,6 +211,52 @@ def quick_sale(product_id: int, quantity: int, unit_price, mode: str = "CASH", *
     return create_sale([item], client_ref=client_ref, sale_type="QUICK", pay_full_mode=mode)
 
 
+def _check_voidable(s, sale: Sale, what: str) -> list[Payment]:
+    if sale.status != "COMPLETED":
+        raise BusinessError("This bill is already cancelled.")
+    if sale.sale_type == "EXCHANGE":
+        raise BusinessError(f"Exchange bills cannot be {what}. Use Returns & Exchanges instead.")
+    if s.scalar(select(func.count(SaleReturn.id)).where(SaleReturn.sale_id == sale.id)):
+        raise BusinessError(f"Items from this bill were already returned, so it cannot be {what}.")
+    assert_day_open(s, sale.business_date, f"change this bill")
+    pays = s.scalars(select(Payment).where(Payment.ref_type == "SALE", Payment.ref_id == sale.id,
+                                           Payment.status == "ACTIVE")).all()
+    for p in pays:
+        assert_day_open(s, p.business_date, "change this bill (a payment was recorded on a closed day)")
+    return list(pays)
+
+
+def _void_sale(s, sale: Sale, pays: list[Payment], reason: str) -> None:
+    """Stock goes back, IMEI units become available again and the bill's payments are voided."""
+    for si in sale.items:
+        prod = s.get(Product, si.product_id)
+        apply_movement(s, prod, si.quantity, "SALE_CANCEL", business_date=sale.business_date, ref_type="SALE",
+                       ref_id=sale.id, ref_line_id=si.id, reference=sale.invoice_no, unit_cost=si.unit_cost,
+                       notes=reason)
+        if si.imei_record_id:
+            rec = s.get(ImeiRecord, si.imei_record_id)
+            rec.status, rec.sale_id, rec.sale_item_id = "IN_STOCK", None, None
+            rec.customer_id, rec.sale_date, rec.warranty_expiry = None, None, None
+    now = datetime.now().replace(microsecond=0)
+    for p in pays:
+        p.status, p.voided_at, p.void_reason = "VOID", now, reason
+    sale.status, sale.paid_amount = "CANCELLED", Decimal("0.00")
+    sale.cancelled_at, sale.cancelled_by, sale.cancel_reason = now, current_user().id, reason
+
+
+def edit_problem(sale_id: int) -> str | None:
+    """Why this bill can't be edited / cancelled now (None if it can)."""
+    with session_scope() as s:
+        sale = s.get(Sale, sale_id)
+        if sale is None:
+            return "Invoice not found."
+        try:
+            _check_voidable(s, sale, "edited")
+        except BusinessError as exc:
+            return str(exc)
+    return None
+
+
 def cancel_sale(sale_id: int, reason: str) -> None:
     """Void a bill of an open business day: stock goes back, its payments are voided."""
     require("cancel_sale")
@@ -208,33 +267,40 @@ def cancel_sale(sale_id: int, reason: str) -> None:
         sale = s.get(Sale, sale_id)
         if sale is None:
             raise NotFoundError("Invoice not found.")
-        if sale.status != "COMPLETED":
-            raise BusinessError("This bill is already cancelled.")
-        if sale.sale_type == "EXCHANGE":
-            raise BusinessError("Exchange bills cannot be cancelled. Use Returns & Exchanges instead.")
-        if s.scalar(select(func.count(SaleReturn.id)).where(SaleReturn.sale_id == sale.id)):
-            raise BusinessError("Items from this bill were already returned, so it cannot be cancelled.")
-        assert_day_open(s, sale.business_date, "cancel this bill")
-        pays = s.scalars(select(Payment).where(Payment.ref_type == "SALE", Payment.ref_id == sale.id,
-                                               Payment.status == "ACTIVE")).all()
-        for p in pays:
-            assert_day_open(s, p.business_date, "cancel this bill (a payment was recorded on a closed day)")
-        for si in sale.items:
-            prod = s.get(Product, si.product_id)
-            apply_movement(s, prod, si.quantity, "SALE_CANCEL", business_date=sale.business_date, ref_type="SALE",
-                           ref_id=sale.id, ref_line_id=si.id, reference=sale.invoice_no, unit_cost=si.unit_cost,
-                           notes=f"Bill cancelled: {reason}")
-            if si.imei_record_id:
-                rec = s.get(ImeiRecord, si.imei_record_id)
-                rec.status, rec.sale_id, rec.sale_item_id = "IN_STOCK", None, None
-                rec.customer_id, rec.sale_date, rec.warranty_expiry = None, None, None
-        now = datetime.now().replace(microsecond=0)
-        for p in pays:
-            p.status, p.voided_at, p.void_reason = "VOID", now, f"Bill cancelled: {reason}"
-        sale.status, sale.paid_amount = "CANCELLED", Decimal("0.00")
-        sale.cancelled_at, sale.cancelled_by, sale.cancel_reason = now, current_user().id, reason
+        pays = _check_voidable(s, sale, "cancelled")
+        _void_sale(s, sale, pays, f"Bill cancelled: {reason}")
         audit(s, "SALE_CANCELLED", "sale", sale.id, {"invoice_no": sale.invoice_no, "reason": reason,
                                                     "total": sale.grand_total})
+
+
+def amend_sale(sale_id: int, items: list[CartItem], *, customer_id: int | None = None, bill_discount=0,
+               payments: dict | None = None, notes: str = "", client_ref: str | None = None) -> dict:
+    """Edit a bill of an open day and keep its invoice number.
+
+    The old version is cancelled (stock back, payments voided) and renamed <number>-E1, -E2…, then the corrected
+    bill is saved under the original number in the same transaction. Both versions stay in Sales History."""
+    require("cancel_sale")
+    try:
+        with session_scope() as s:
+            sale = s.get(Sale, sale_id)
+            if sale is None:
+                raise NotFoundError("Invoice not found.")
+            require("quick_sale" if sale.sale_type == "QUICK" else "billing")
+            pays = _check_voidable(s, sale, "edited")
+            number, old_total, bdate, kind = sale.invoice_no, sale.grand_total, sale.business_date, sale.sale_type
+            _void_sale(s, sale, pays, "Edited – replaced by the corrected bill")
+            n = 1 + (s.scalar(select(func.count(Sale.id)).where(Sale.invoice_no.like(f"{number}-E%"))) or 0)
+            sale.invoice_no = f"{number}-E{n}"
+            s.flush()
+            new = _create_sale(s, items, customer_id=customer_id, bill_discount=bill_discount, payments=payments,
+                               notes=notes, client_ref=client_ref, sale_type=kind, invoice_no=number,
+                               business_date=bdate)
+            audit(s, "SALE_EDITED", "sale", new.id, {"invoice_no": number, "old_total": old_total,
+                                                    "new_total": new.grand_total, "old_version": sale.invoice_no})
+            return dict(id=new.id, invoice_no=new.invoice_no, grand_total=new.grand_total, paid=new.paid_amount,
+                        balance=new.balance_due, cogs=new.cogs_total, old_version=sale.invoice_no)
+    except IntegrityError as exc:
+        raise DuplicateError("This change was already saved (duplicate prevented).") from exc
 
 
 def collect_sale_payment(sale_id: int, amount, mode: str, notes: str = "", client_ref: str | None = None) -> int:
@@ -307,6 +373,7 @@ def get_sale(sale_id: int) -> dict:
         d["customer"] = dict(name=cust.name, phone=cust.phone, address=cust.address, gstin=cust.gstin,
                              is_walk_in=cust.is_walk_in)
         d["lines"] = [dict(id=i.id, product_id=i.product_id, product_name=i.product_name, imei=i.imei_text,
+                           imei_record_id=i.imei_record_id,
                            quantity=i.quantity, unit_price=i.unit_price,
                            discount=i.item_discount + i.bill_discount_share, item_discount=i.item_discount,
                            taxable=i.taxable_value, gst_rate=i.gst_rate, gst=i.gst_amount, total=i.line_total,

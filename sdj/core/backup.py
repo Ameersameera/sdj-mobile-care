@@ -79,7 +79,7 @@ def cleanup_old_backups(keep: int | None = None) -> int:
     files = sorted(backups_dir().glob("SDJ_backup_*.db"), key=lambda x: x.stat().st_mtime, reverse=True)
     removed = 0
     for p in files[keep:]:
-        if "_pre_restore" in p.name:
+        if "_pre_restore" in p.name or "_before_reset" in p.name:
             continue
         try:
             p.unlink()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -24,8 +25,15 @@ ALL_PERMISSIONS = [
     "collect_payment", "products_view", "products_edit", "stock_view", "stock_adjust", "purchases",
     "services", "service_history", "spare_parts", "customers", "suppliers", "expenses", "returns",
     "live_summary", "daily_closing", "reports", "accounting", "settings", "users", "backup",
-    "reopen_day", "audit_log",
+    "reopen_day", "audit_log", "discount_override",
 ]
+
+PERMISSION_LABELS = {
+    "cancel_sale": "cancel or edit a bill", "stock_adjust": "adjust stock", "returns": "process a return",
+    "discount_override": "give a discount above the staff limit", "products_edit": "add or edit products",
+    "purchases": "record a purchase", "reopen_day": "reopen a closed day", "expenses": "record an expense",
+    "collect_payment": "collect a payment", "billing": "make a bill", "settings": "change settings",
+}
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "ADMIN": set(ALL_PERMISSIONS),
@@ -55,6 +63,7 @@ class CurrentUser:
 
 SYSTEM_USER = CurrentUser(None, "system", "System", "ADMIN", set(ALL_PERMISSIONS))
 _current: CurrentUser = SYSTEM_USER
+_approver: CurrentUser | None = None
 
 
 def current_user() -> CurrentUser:
@@ -68,7 +77,25 @@ def set_current_user(user: CurrentUser | None) -> None:
 
 def require(perm: str) -> None:
     if not _current.can(perm):
-        raise PermissionDenied("You do not have permission for this action. Please ask the owner/admin.")
+        raise PermissionDenied(perm=perm)
+
+
+def approved_by() -> CurrentUser | None:
+    """The owner / manager who approved the action now running, if any."""
+    return _approver
+
+
+@contextmanager
+def approved(approver: CurrentUser, perms: set[str] | list[str]):
+    """Run an action with extra permissions that an owner / manager just approved with their password."""
+    global _current, _approver
+    saved, saved_approver = _current, _approver
+    _current = CurrentUser(saved.id, saved.username, saved.full_name, saved.role, set(saved.permissions) | set(perms))
+    _approver = approver
+    try:
+        yield
+    finally:
+        _current, _approver = saved, saved_approver
 
 
 # ---------------------------------------------------------------- hashing
@@ -117,6 +144,36 @@ def authenticate(username: str, password: str) -> CurrentUser:
         cu = _to_current(u)
         audit(s, "LOGIN", "user", u.id, {"username": u.username}, user=cu)
         return cu
+
+
+def verify_approver(username: str, password: str, perm: str) -> CurrentUser:
+    """Owner / manager approval: checks their password and that they themselves may do *perm*."""
+    from .audit import audit
+    with session_scope() as s:
+        u = s.scalar(select(User).where(func.lower(User.username) == (username or "").strip().lower()))
+        if u is None or not u.is_active or not verify_password(password or "", u.password_hash):
+            audit(s, "APPROVAL_FAILED", "user", username or "", {"username": username, "action": perm})
+            raise BusinessError("Incorrect username or password.")
+        cu = _to_current(u)
+        if not cu.can(perm):
+            raise BusinessError(f"{cu.display_name} is not allowed to {PERMISSION_LABELS.get(perm, perm)} either. "
+                                "Ask the owner.")
+        if cu.id == _current.id:
+            raise BusinessError("Someone else (the owner or a manager) has to approve this.")
+        audit(s, "APPROVAL_GIVEN", "user", u.id, {"approver": u.username, "for_user": _current.username,
+                                                  "action": perm})
+        return cu
+
+
+def check_own_password(password: str) -> None:
+    """Re-confirm the logged-in user's password before a dangerous action."""
+    from .audit import audit
+    cu = current_user()
+    with session_scope() as s:
+        u = s.get(User, cu.id) if cu.id else None
+        if u is None or not verify_password(password or "", u.password_hash):
+            audit(s, "PASSWORD_CHECK_FAILED", "user", cu.id or "", {"username": cu.username})
+            raise ValidationError("The password is not correct.")
 
 
 def create_user(username: str, password: str, role: str, full_name: str = "", *, check_perm: bool = True) -> int:

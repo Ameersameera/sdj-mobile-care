@@ -120,6 +120,110 @@ def ask_text(parent, title: str, prompt: str, default: str = "") -> str | None:
     return text.strip() if ok else None
 
 
+# ================================================================ owner / manager approval
+def approval_enabled() -> bool:
+    from ..core import settings as _settings
+    try:
+        return bool(_settings.get("owner_approval"))
+    except Exception:
+        return False
+
+
+class ApprovalDialog(QDialog):
+    """The owner or a manager types their own login to allow one action for a staff member."""
+
+    def __init__(self, parent, perm: str, reason: str = ""):
+        from ..core.auth import PERMISSION_LABELS
+        super().__init__(parent)
+        self.perm = perm
+        self.approver = None
+        self.setWindowTitle("Owner approval needed")
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 14)
+        lay.setSpacing(10)
+        lay.addWidget(label(f"Approval needed to {PERMISSION_LABELS.get(perm, perm)}", "SectionTitle"))
+        lay.addWidget(label((reason + "\n\n" if reason and "permission" not in reason.lower() else "")
+                            + "Ask the owner or a manager to enter their username and password.", "Muted", wrap=True))
+        form = QFormLayout()
+        self.user = QLineEdit()
+        self.user.setPlaceholderText("owner / manager username")
+        self.pw = QLineEdit()
+        self.pw.setEchoMode(QLineEdit.Password)
+        form.addRow("Username", self.user)
+        form.addRow("Password", self.pw)
+        lay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok = bb.button(QDialogButtonBox.Ok)
+        ok.setText("Approve")
+        ok.setProperty("variant", "primary")
+        bb.accepted.connect(self._ok)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.user.setFocus()
+
+    def _ok(self):
+        from ..core.auth import verify_approver
+        try:
+            self.approver = verify_approver(self.user.text(), self.pw.text(), self.perm)
+        except BusinessError as exc:
+            error(self, str(exc))
+            self.pw.clear()
+            return
+        self.accept()
+
+
+def ask_approval(parent, perm: str, reason: str = ""):
+    """Returns the approving user, or None if nobody approved."""
+    if not approval_enabled():
+        return None
+    dlg = ApprovalDialog(parent, perm, reason)
+    return dlg.approver if dlg.exec() == QDialog.Accepted else None
+
+
+def ensure_permission(parent, perm: str):
+    """Before opening a screen for a protected action: True if the user may do it, an approver if the owner
+    approved it now, or None (show nothing more)."""
+    from ..core.auth import current_user
+    if current_user().can(perm):
+        return True
+    approver = ask_approval(parent, perm)
+    if approver is None and not approval_enabled():
+        error(parent, "You do not have permission for this action. Please ask the owner/admin.")
+    return approver
+
+
+def run_approved(parent, fn: Callable, *args, success: str | None = None, topic: str | None = None, **kwargs):
+    """Like run_safely, but when a staff member lacks a permission the owner / manager can approve on the spot."""
+    from ..core.auth import approved
+    from ..core.errors import PermissionDenied
+    try:
+        result = fn(*args, **kwargs)
+    except PermissionDenied as exc:
+        if not exc.perm or not approval_enabled():
+            error(parent, str(exc))
+            return None
+        approver = ask_approval(parent, exc.perm, str(exc))
+        if approver is None:
+            return None
+        with approved(approver, {exc.perm}):
+            return run_approved(parent, fn, *args, success=success, topic=topic, **kwargs)
+    except BusinessError as exc:
+        error(parent, str(exc))
+        return None
+    except Exception as exc:
+        import logging
+        logging.getLogger("sdj.ui").exception("operation failed")
+        error(parent, f"Something went wrong: {exc}\n\nYour data is safe – the change was not saved.", "Unexpected error")
+        return None
+    from .bus import changed, toast
+    if topic:
+        changed(topic)
+    if success:
+        toast(success)
+    return result if result is not None else True
+
+
 def run_safely(parent, fn: Callable, *args, success: str | None = None, topic: str | None = None, **kwargs):
     """Call a business function; show friendly errors; refresh screens on success."""
     from .bus import changed, toast
@@ -768,9 +872,19 @@ class FormDialog(QDialog):
         self.root.addWidget(self.buttons)
 
     def _accept(self) -> None:
+        from ..core.auth import approved
+        from ..core.errors import PermissionDenied
         try:
             if self.on_save() is not False:
                 self.accept()
+        except PermissionDenied as exc:
+            approver = ask_approval(self, exc.perm, str(exc)) if exc.perm else None
+            if approver is None:
+                if not (exc.perm and approval_enabled()):
+                    error(self, str(exc))
+                return
+            with approved(approver, {exc.perm}):
+                self._accept()
         except BusinessError as exc:
             error(self, str(exc))
 

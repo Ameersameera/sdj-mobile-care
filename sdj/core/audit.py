@@ -20,8 +20,11 @@ def _default(o):
 
 
 def audit(session, action: str, entity: str = "", entity_id=None, details: dict | None = None, *, user=None) -> None:
-    from .auth import current_user
+    from .auth import approved_by, current_user
     u = user or current_user()
+    approver = approved_by()
+    if approver is not None and approver.id != u.id:
+        details = dict(details or {}, approved_by=approver.username)
     session.add(AuditLog(user_id=u.id, username=u.username, action=action, entity=entity,
                          entity_id="" if entity_id is None else str(entity_id),
                          details=json.dumps(details or {}, default=_default, ensure_ascii=False)))

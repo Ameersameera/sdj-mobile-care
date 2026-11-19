@@ -28,7 +28,7 @@ All 20 screens are in `docs/screenshots/`. Printed documents generated from the 
 | **Dashboard** | Today's sales, invoices, products sold, service jobs & income, spare parts sold, expenses, gross & net operating profit; cash / UPI / card / other / customer dues; stock summary; 7 graphs (daily, weekly, monthly, revenue vs expenses, top products, service income, profit); recent transactions; quick actions |
 | **New Billing (POS)** | Product search, barcode scan, IMEI scan, multi-item bills, item & bill discounts, GST (inclusive / exclusive, CGST + SGST), round-off, cash / UPI / card / other, split, partial and credit payments, 58 mm / 80 mm thermal and A4 invoices, PDF, UPI "scan to pay" QR |
 | **Quick Sale** | Product → quantity → price → payment mode → Save. Stock, revenue and profit update instantly |
-| **Sales History** | Search by invoice, customer, phone, product or IMEI; view, reprint, collect dues, cancel (same open day) or return |
+| **Sales History** | Search by invoice, customer, phone, product or IMEI; view, reprint, collect dues, **edit** or cancel (open day – an edited bill keeps its invoice number) or return |
 | **Products** | Mobiles, accessories, spare parts with every field from the spec, your own categories, Excel import / export, IMEI & warranty tracking, warranty claims |
 | **Stock Management** | Live stock & valuation (weighted average cost), low / out-of-stock alerts, full movement history, authorised adjustments with reason |
 | **Purchases** | Supplier invoices with GST, discount, freight (landed cost), IMEI entry, part payments; cancel if stock is still there |
@@ -42,15 +42,15 @@ All 20 screens are in `docs/screenshots/`. Printed documents generated from the 
 | **Daily Closing** | Owner-controlled *Close Day* at any time: product-wise, category, service, financial, payment report, cash reconciliation, closing stock; PDF + Excel; record locked; audited reopen |
 | **Monthly / Yearly Reports** | All totals, product-wise and service-wise reports, payment breakdown, dues, closing stock & valuation; calendar or Indian financial year; PDF / Excel / CSV |
 | **Accounting** | Profit & loss, GST summary, customer dues with ageing, supplier dues, cash & bank book, stock valuation |
-| **Settings** | Shop details & logo, invoice numbering, GST, printers, backups / restore, stock & service defaults, product categories (add / rename / hide), staff accounts & roles, password, light / dark theme, audit log |
+| **Settings** | Shop details & logo, invoice numbering, GST, printers, backups / restore, stock & service defaults, product categories (add / rename / hide), staff accounts & roles, owner approval & staff discount limit, **data reset** (per module, date range or full – with undo), password, light / dark theme, audit log |
 
 ---
 
 ## 2. Install and run on Windows 10 / 11
 
 ### Option A – Windows app (recommended)
-1. Download `SDJMobileCare_Setup_1.1.0.exe` from the repository's **Releases** page (or build it yourself – see section 7).
-2. Run `SDJMobileCare_Setup_1.1.0.exe` (installer) – or open `dist\SDJMobileCare\SDJMobileCare.exe` directly.
+1. Download `SDJMobileCare_Setup_1.2.0.exe` from the repository's **Releases** page (or build it yourself – see section 7).
+2. Run `SDJMobileCare_Setup_1.2.0.exe` (installer) – or open `dist\SDJMobileCare\SDJMobileCare.exe` directly.
 3. On the **first start** a short setup asks for the shop details (leave blank whatever you don't have yet – nothing is
    invented) and creates the **owner / admin login**.
 
@@ -131,6 +131,20 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 * Passwords are stored as salted PBKDF2-SHA256 hashes. Roles: **Admin (owner)**, **Manager**, **Sales staff**, **Technician**
   (staff and technicians never see cost or profit figures).
 * Only one copy of the app can run at a time (protects the database).
+* **Owner approval**: when staff lack a permission (cancel / edit a bill, adjust stock, a discount above the staff limit),
+  the owner or a manager can approve on the spot with their own password. The audit log records who approved.
+
+### Resetting data (Settings → Reset, owner only)
+* Clear practice data or wrong entries: **Sales & bills**, **Repair jobs**, **Purchases**, **Expenses**, **Daily closings**,
+  **Stock** (set to 0), **Products**, **Customers** / **Suppliers** with nothing left – for *All time* or *From – To* dates –
+  or a **Full reset** (like a new install; shop details, logo, settings, logins and categories stay).
+* *Show what will be removed* runs the reset and rolls it back, so the preview is exactly what will go.
+* The owner's password and the word **RESET** are required. A backup is written first; **Undo last reset** restores it.
+* Stock and average cost are rebuilt from the remaining stock history, phones (IMEI) and partly returned bills are put
+  right, and closed days touched by the reset keep their counted cash but get their figures recalculated.
+  A reset that would leave stock below zero (e.g. removing a purchase whose phones were sold) is refused with the reason.
+* Document numbers start again from 1 once nothing of that kind is left. The audit log is never cleared.
+* GST-registered shops must keep their records for 6 years – correct real bills with *Cancel* / *Return*, not a reset.
 
 ### Backup & restore instructions
 * **Automatic**: a verified backup is made once a day at start-up, after every *Close Day* and when the app closes
@@ -161,7 +175,7 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 2. Optional: install **Inno Setup 6** for the setup file.
 3. Double-click **`build_windows.bat`**. It creates a virtual environment, installs everything, runs all tests and builds:
    * `dist\SDJMobileCare\SDJMobileCare.exe` (the app – copy this whole folder anywhere), and
-   * `dist\installer\SDJMobileCare_Setup_1.1.0.exe` (if Inno Setup is installed).
+   * `dist\installer\SDJMobileCare_Setup_1.2.0.exe` (if Inno Setup is installed).
 
 ### Option B – let GitHub build it (no Python needed on your PC)
 1. Create a GitHub repository and upload this folder (including `.github/workflows/build-windows.yml`).
@@ -184,9 +198,9 @@ pip install -r requirements.txt
 set QT_QPA_PLATFORM=offscreen
 python -m pytest -v
 ```
-48 automated tests cover the complete 20-step workflow from the specification, returns, exchanges, cancelled bills,
+76 automated tests cover the complete 20-step workflow from the specification, returns, exchanges, cancelled bills,
 insufficient stock, partial payments & credit, duplicate prevention, GST, IMEI & warranty, closed-day locking,
-permissions, backup / restore and database recovery, plus GUI tests that drive the real screens.
+permissions, owner approval, bill editing, data reset & undo, backup / restore and database recovery, plus GUI tests that drive the real screens.
 See **[TEST_RESULTS.md](TEST_RESULTS.md)** for the latest run.
 
 ---

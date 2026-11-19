@@ -298,3 +298,88 @@ def test_product_dialog_plus_button_adds_category(gui):
     assert _errors(msgs) == []
     p = [x for x in inventory.list_products() if x["name"] == "Back glass – Redmi 13C"][0]
     assert p["category_id"] == cd.result_id
+
+
+def test_reset_tab_rules_preview_and_run(gui, make_product, monkeypatch):
+    win, msgs, app = gui
+    c = make_product("Charger", "Chargers", 250, 400, qty=10)
+    sales.quick_sale(c, 2, 400, "CASH")
+    from sdj.ui.pages import settings_page
+    win.navigate("settings")
+    page = win.pages["settings"]
+    page.open_with({"tab": "reset"})
+    app.processEvents()
+    assert page.tabs.currentIndex() == page.tab_index["reset"]
+    page.r_boxes["sales"].setChecked(True)
+    page.reset_preview()
+    assert "1 bill(s)" in page.r_preview.text()
+    page.r_boxes["products"].setChecked(True)            # products drags its history along …
+    assert page.r_boxes["stock"].isChecked() and not page.r_boxes["stock"].isEnabled() and not page.r_all.isEnabled()
+    page.r_boxes["products"].setChecked(False)           # … and gives the old choice back
+    assert page.r_boxes["sales"].isChecked() and not page.r_boxes["stock"].isChecked() and page.r_all.isEnabled()
+    page.r_full.setChecked(True)
+    assert all(cb.isChecked() for cb in page.r_boxes.values())
+    page.r_full.setChecked(False)
+    assert [k for k, cb in page.r_boxes.items() if cb.isChecked()] == ["sales"]
+
+    def fake_exec(self):
+        self.pw.setText("admin123")
+        self.word.setText("RESET")
+        return QDialog.Accepted
+    monkeypatch.setattr(settings_page.ResetConfirmDialog, "exec", fake_exec)
+    page.reset_run()
+    assert _errors(msgs) == []
+    assert inventory.get_product(c)["quantity"] == 10 and sales.list_sales() == []
+    assert "Last reset" in page.r_last.text()
+
+
+def test_billing_edit_mode_keeps_the_invoice_number(gui, make_product):
+    win, msgs, app = gui
+    from sdj.core.sales import CartItem
+    c = make_product("Charger", "Chargers", 250, 400, qty=10)
+    cab = make_product("Cable", "USB Cables", 60, 150, qty=10)
+    s1 = sales.create_sale([CartItem(c, 2, Dec("400"))], payments={"CASH": Dec("800")})
+    from sdj.ui.dialogs import SaleDetailDialog
+    assert not SaleDetailDialog(win, s1["id"]).edit_btn.isHidden()
+    win.navigate("billing", {"edit_sale_id": s1["id"]})
+    app.processEvents()
+    page = win.pages["billing"]
+    assert page._edit and not page.edit_bar.isHidden() and page.lines[0]["qty"] == 2
+    assert page.pay["CASH"].value_d() == Dec("800")
+    page.lines[0]["qty"] = 1
+    page.add_product(inventory.get_product(cab))
+    page._full("UPI")
+    page.print_choice.setCurrentIndex(page.print_choice.findData("NONE"))
+    page.save(False)
+    assert _errors(msgs) == []
+    rows = {r["invoice_no"]: r for r in sales.list_sales()}
+    assert rows[s1["invoice_no"]]["grand_total"] == Dec("550.00") and rows[s1["invoice_no"] + "-E1"]["status"] == "CANCELLED"
+    assert page._edit is None and page.edit_bar.isHidden()
+    assert inventory.get_product(c)["quantity"] == 9
+
+
+def test_staff_gets_owner_approval_to_cancel(gui, make_product, monkeypatch):
+    win, msgs, app = gui
+    from sdj.core import auth
+    from sdj.core.sales import CartItem
+    from sdj.ui import widgets
+    from sdj.ui.dialogs import SaleDetailDialog
+    c = make_product("Charger", "Chargers", 250, 400, qty=10)
+    s1 = sales.create_sale([CartItem(c, 1, Dec("400"))], payments={"CASH": Dec("400")})
+    auth.create_user("staff", "staff123", "CASHIER", "Counter staff")
+    auth.set_current_user(auth.authenticate("staff", "staff123"))
+    dlg = SaleDetailDialog(win, s1["id"])
+    assert not dlg.cancel_btn.isHidden()                 # visible because the owner can approve
+    monkeypatch.setattr(widgets, "ask_text", lambda *a, **k: "Wrong item")
+
+    def approve(self):
+        self.approver = auth.verify_approver("admin", "admin123", self.perm)
+        return QDialog.Accepted
+    monkeypatch.setattr(widgets.ApprovalDialog, "exec", approve)
+    dlg._cancel()
+    assert _errors(msgs) == []
+    assert sales.get_sale(s1["id"])["status"] == "CANCELLED"
+    assert not auth.current_user().can("cancel_sale")
+    settings.set_value("owner_approval", False)
+    s2 = sales.create_sale([CartItem(c, 1, Dec("400"))], payments={"CASH": Dec("400")})
+    assert SaleDetailDialog(win, s2["id"]).cancel_btn.isHidden()
