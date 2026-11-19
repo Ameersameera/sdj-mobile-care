@@ -49,7 +49,7 @@ All 20 screens are in `docs/screenshots/`. Printed documents generated from the 
 ## 2. Install and run on Windows 10 / 11
 
 ### Option A – Windows app (recommended)
-1. Get the built app: run `build_windows.bat` on any Windows PC (see section 7), **or** let GitHub build it for you (section 7, option B).
+1. Download `SDJMobileCare_Setup_1.0.0.exe` from the repository's **Releases** page (or build it yourself – see section 7).
 2. Run `SDJMobileCare_Setup_1.0.0.exe` (installer) – or open `dist\SDJMobileCare\SDJMobileCare.exe` directly.
 3. On the **first start** a short setup asks for the shop details (leave blank whatever you don't have yet – nothing is
    invented) and creates the **owner / admin login**.
@@ -167,7 +167,9 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 1. Create a GitHub repository and upload this folder (including `.github/workflows/build-windows.yml`).
 2. GitHub Actions runs the tests on Windows and builds the app automatically.
 3. Open *Actions → Build Windows app → latest run* and download **SDJMobileCare-Windows-installer** (setup .exe) or
-   **SDJMobileCare-Windows-app** (portable folder).
+   **SDJMobileCare-Windows-app** (portable folder). These run downloads expire after 90 days.
+4. To publish a permanent download on the **Releases** page, push a version tag – e.g. `git tag v1.0.1 && git push origin v1.0.1`.
+   The same workflow builds the app and attaches the installer and a portable zip to a new release.
 
 **Portable mode:** put an empty file named `portable.flag` next to `SDJMobileCare.exe` and all data is kept beside the
 app (e.g. on a USB drive) instead of in the user profile.
