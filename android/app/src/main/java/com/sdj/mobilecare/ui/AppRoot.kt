@@ -1,5 +1,7 @@
 package com.sdj.mobilecare.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.Image
@@ -53,6 +55,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -63,6 +66,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import com.sdj.mobilecare.R
 import com.sdj.mobilecare.data.Repo
 import com.sdj.mobilecare.data.UiState
+import com.sdj.mobilecare.data.LinkError
 import com.sdj.mobilecare.data.UserError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -163,11 +167,25 @@ fun LinkScreen(ui: Ui, st: UiState, phoneName: String) {
     var showHost by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf(if (st.sync.removed) "This phone was removed on the PC. Ask the owner for a new code." else "") }
+    var testUrl by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
     fun go(c: String, qr: Repo.QrLink?) {
         busy = true
         err = ""
+        testUrl = ""
         ui.scope.launch {
-            try { ui.repo.link(c, qr, host, phoneName) } catch (e: UserError) { err = e.message ?: "" } catch (e: Exception) { err = "Could not link: ${e.message}" } finally { busy = false }
+            try {
+                ui.repo.link(c, qr, host, phoneName)
+            } catch (e: LinkError) {
+                err = e.message ?: ""
+                testUrl = e.host?.let { "http://$it:${e.port}" } ?: ""
+            } catch (e: UserError) {
+                err = e.message ?: ""
+            } catch (e: Exception) {
+                err = "Could not link: ${e.message}"
+            } finally {
+                busy = false
+            }
         }
     }
     val scan = rememberScanner("Point the camera at the QR code in SDJ Mobile Care on the PC (Settings → Phone link)") { text ->
@@ -189,6 +207,13 @@ fun LinkScreen(ui: Ui, st: UiState, phoneName: String) {
                     if (busy) Busy() else Text("Link with code")
                 }
                 if (err.isNotEmpty()) Text(err, color = Bad, fontSize = 14.sp)
+                if (testUrl.isNotEmpty()) {
+                    Text("Test: this opens $testUrl in the browser. If it says 'SDJ Mobile Care phone sync is working', " +
+                        "the network is fine – link again. If it does not open, allow SDJ in the PC's firewall.", color = Muted, fontSize = 12.sp)
+                    OutlinedButton(onClick = {
+                        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(testUrl))) }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Test the connection in the browser") }
+                }
             }
             Text("No cloud and no internet are used. The phone keeps its own copy, so you can make bills even when the " +
                 "PC is off; everything syncs when the phone is back on the shop Wi-Fi.", color = Muted, fontSize = 12.sp)
