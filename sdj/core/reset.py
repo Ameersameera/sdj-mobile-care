@@ -412,16 +412,17 @@ def preview_reset(modules, start: date | None = None, end: date | None = None) -
     _owner_only()
     mods, start, end, full = resolve(modules, start, end)
     from ..db import base
-    session = base._db.factory()
-    try:
+    with base.db_lock:
+        session = base._db.factory()
         try:
-            st = _execute(session, mods, start, end, full)
-            st["blocked"] = ""
-        except ResetBlocked as exc:
-            st = {"counts": {}, "amounts": {}, "dates": set(), "notes": [], "blocked": str(exc)}
-    finally:
-        session.rollback()
-        session.close()
+            try:
+                st = _execute(session, mods, start, end, full)
+                st["blocked"] = ""
+            except ResetBlocked as exc:
+                st = {"counts": {}, "amounts": {}, "dates": set(), "notes": [], "blocked": str(exc)}
+        finally:
+            session.rollback()
+            session.close()
     st.update(modules=sorted(mods), start=start, end=end, full=full, period=period_label(start, end))
     return st
 
@@ -472,7 +473,7 @@ def run_reset(modules, start: date | None = None, end: date | None = None, *, pa
     return st
 
 
-def _refresh_closings(dates: set[date]) -> int:
+def _refresh_closings(dates: set[date], note: str | None = None) -> int:
     """Closed days touched by a reset keep their counted cash, but their figures are recalculated."""
     from .reports import build_day_report
     done = 0
@@ -497,7 +498,8 @@ def _refresh_closings(dates: set[date]) -> int:
                 rec.net_sales, rec.gross_profit = fin["Net sales (goods)"], fin["Gross profit"]
                 rec.net_profit = fin["Net operating profit"]
                 rec.summary_json = rep.to_json()
-                rec.notes = ((rec.notes + "\n") if rec.notes else "") + f"Figures updated after a data reset on {date.today():%d %b %Y}."
+                text_ = note or f"Figures updated after a data reset on {date.today():%d %b %Y}."
+                rec.notes = ((rec.notes + "\n") if rec.notes else "") + text_
                 rec.is_locked = False            # step around the lock trigger for this one update …
                 s.flush()
                 rec.is_locked = locked           # … and lock it again

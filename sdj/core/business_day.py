@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import select, union
 
 from ..db.models import DailyClosing, Expense, Payment, Sale, ServiceJob, StockMovement
+from . import syncctx
 from .errors import DayClosedError
 
 
@@ -30,6 +31,9 @@ def is_day_closed(session, d: date) -> bool:
 
 
 def current_business_date(session) -> date:
+    entry = syncctx.current()
+    if entry is not None and entry.business_date is not None:
+        return entry.business_date          # an entry from a phone keeps the day it was made on
     d = today()
     closed = closed_dates(session)
     while d in closed:
@@ -39,6 +43,10 @@ def current_business_date(session) -> date:
 
 def assert_day_open(session, d: date, what: str = "change this record") -> None:
     if is_day_closed(session, d):
+        entry = syncctx.current()
+        if entry is not None and entry.allow_closed_day:
+            entry.closed_days.add(d)        # saved anyway; the owner is asked to update that closing
+            return
         raise DayClosedError(
             f"The business day {d.strftime('%d %b %Y')} is closed and locked, so you cannot {what}. "
             "An admin can reopen the day from Daily Closing if a correction is really needed.")

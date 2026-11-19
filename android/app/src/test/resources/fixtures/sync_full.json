@@ -1,0 +1,580 @@
+{
+ "seq": 1,
+ "results": [],
+ "token": "9069fb78:2:2026-11-19",
+ "time": "2026-11-19T17:44:53",
+ "hashes": {
+  "categories": "20aec768571dd69d",
+  "products": "3736d1656b802c2f",
+  "imeis": "dfe20dd015710fc6",
+  "customers": "fb08bbd877d757b2",
+  "sales": "503d55c32493efb8",
+  "jobs": "8e4530f39bc9f1f5",
+  "expenses": "1d3a4183730701e6",
+  "dash": "f4b7fc23b2273ba4",
+  "shop": "31ec3e0f3fba441c",
+  "users": "47ef2d453b35a595"
+ },
+ "data": {
+  "categories": [
+   {
+    "id": 1,
+    "name": "Smartphones",
+    "grp": "MOBILE",
+    "imei": true,
+    "on": true
+   },
+   {
+    "id": 2,
+    "name": "Feature Phones",
+    "grp": "MOBILE",
+    "imei": true,
+    "on": true
+   },
+   {
+    "id": 3,
+    "name": "Refurbished Phones",
+    "grp": "MOBILE",
+    "imei": true,
+    "on": true
+   },
+   {
+    "id": 4,
+    "name": "Second-hand Phones",
+    "grp": "MOBILE",
+    "imei": true,
+    "on": true
+   },
+   {
+    "id": 5,
+    "name": "Chargers",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 6,
+    "name": "USB Cables",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 7,
+    "name": "Earphones",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 8,
+    "name": "Headphones",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 9,
+    "name": "Bluetooth Speakers",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 10,
+    "name": "Smartwatches",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 11,
+    "name": "Mobile Covers",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 12,
+    "name": "Tempered Glass",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 13,
+    "name": "Power Banks",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 14,
+    "name": "Memory Cards",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 15,
+    "name": "Adapters",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 16,
+    "name": "Other Accessories",
+    "grp": "ACCESSORY",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 17,
+    "name": "Displays",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 18,
+    "name": "Batteries",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 19,
+    "name": "Charging Ports",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 20,
+    "name": "Speakers",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 21,
+    "name": "Microphones",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 22,
+    "name": "Camera Modules",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 23,
+    "name": "Flex Cables",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 24,
+    "name": "IC Components",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 25,
+    "name": "Connectors",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   },
+   {
+    "id": 26,
+    "name": "Other Repair Components",
+    "grp": "SPARE",
+    "imei": false,
+    "on": true
+   }
+  ],
+  "products": [
+   {
+    "id": 4,
+    "code": "P00004",
+    "name": "Back cover A15",
+    "brand": "",
+    "cat": 5,
+    "model": "",
+    "bc": "",
+    "price": 19900,
+    "gst": 1800,
+    "hsn": "",
+    "qty": 1,
+    "min": 5,
+    "imei": false,
+    "on": true,
+    "wm": 0
+   },
+   {
+    "id": 1,
+    "code": "P00001",
+    "name": "Charger 20W",
+    "brand": "",
+    "cat": 5,
+    "model": "",
+    "bc": "8901234567890",
+    "price": 39900,
+    "gst": 1800,
+    "hsn": "",
+    "qty": 8,
+    "min": 3,
+    "imei": false,
+    "on": true,
+    "wm": 0
+   },
+   {
+    "id": 3,
+    "code": "P00003",
+    "name": "Display Redmi 13C",
+    "brand": "",
+    "cat": 17,
+    "model": "",
+    "bc": "",
+    "price": 150000,
+    "gst": 2800,
+    "hsn": "",
+    "qty": 4,
+    "min": 0,
+    "imei": false,
+    "on": true,
+    "wm": 0
+   },
+   {
+    "id": 2,
+    "code": "P00002",
+    "name": "Vivo Y28 4/128",
+    "brand": "",
+    "cat": 1,
+    "model": "",
+    "bc": "",
+    "price": 1399900,
+    "gst": 1800,
+    "hsn": "",
+    "qty": 3,
+    "min": 0,
+    "imei": true,
+    "on": true,
+    "wm": 12
+   }
+  ],
+  "imeis": [
+   {
+    "id": 1,
+    "p": 2,
+    "i1": "356938035643809",
+    "i2": "",
+    "sn": ""
+   },
+   {
+    "id": 2,
+    "p": 2,
+    "i1": "356938035643817",
+    "i2": "",
+    "sn": ""
+   },
+   {
+    "id": 3,
+    "p": 2,
+    "i1": "356938035643825",
+    "i2": "",
+    "sn": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 3,
+    "name": "Meena S",
+    "phone": "9123456780",
+    "addr": "",
+    "due": 30000
+   },
+   {
+    "id": 2,
+    "name": "Ravi Kumar",
+    "phone": "9876543210",
+    "addr": "",
+    "due": 29800
+   }
+  ],
+  "sales": [
+   {
+    "id": 2,
+    "no": "SDJ/26-27/00002",
+    "ref": "",
+    "type": "BILL",
+    "cust": 1,
+    "cname": "Walk-in Customer",
+    "cphone": "",
+    "d": "2026-11-19",
+    "at": "2026-11-19 17:44:53.000000",
+    "gst_on": true,
+    "incl": true,
+    "gross": 19900,
+    "idisc": 0,
+    "bdisc": 0,
+    "taxable": 16864,
+    "gst": 3036,
+    "round": 0,
+    "total": 19900,
+    "paid": 19900,
+    "returned": 0,
+    "refunded": 0,
+    "due": 0,
+    "st": "COMPLETED",
+    "notes": "",
+    "why": "",
+    "blk": "",
+    "items": [
+     {
+      "p": 4,
+      "name": "Back cover A15",
+      "imei_id": null,
+      "imei": "",
+      "q": 1,
+      "price": 19900,
+      "disc": 0,
+      "share": 0,
+      "taxable": 16864,
+      "rate": 1800,
+      "gst": 3036,
+      "total": 19900,
+      "ret": 0,
+      "wm": 0
+     }
+    ],
+    "pays": [
+     {
+      "d": "2026-11-19",
+      "dir": "IN",
+      "mode": "UPI",
+      "amt": 19900,
+      "kind": "SALE_RECEIPT",
+      "st": "ACTIVE"
+     }
+    ]
+   },
+   {
+    "id": 1,
+    "no": "SDJ/26-27/00001",
+    "ref": "",
+    "type": "BILL",
+    "cust": 2,
+    "cname": "Ravi Kumar",
+    "cphone": "9876543210",
+    "d": "2026-11-19",
+    "at": "2026-11-19 17:44:53.000000",
+    "gst_on": true,
+    "incl": true,
+    "gross": 79800,
+    "idisc": 0,
+    "bdisc": 0,
+    "taxable": 67627,
+    "gst": 12173,
+    "round": 0,
+    "total": 79800,
+    "paid": 50000,
+    "returned": 0,
+    "refunded": 0,
+    "due": 29800,
+    "st": "COMPLETED",
+    "notes": "",
+    "why": "",
+    "blk": "",
+    "items": [
+     {
+      "p": 1,
+      "name": "Charger 20W",
+      "imei_id": null,
+      "imei": "",
+      "q": 2,
+      "price": 39900,
+      "disc": 0,
+      "share": 0,
+      "taxable": 67627,
+      "rate": 1800,
+      "gst": 12173,
+      "total": 79800,
+      "ret": 0,
+      "wm": 0
+     }
+    ],
+    "pays": [
+     {
+      "d": "2026-11-19",
+      "dir": "IN",
+      "mode": "CASH",
+      "amt": 50000,
+      "kind": "SALE_RECEIPT",
+      "st": "ACTIVE"
+     }
+    ]
+   }
+  ],
+  "jobs": [
+   {
+    "id": 1,
+    "no": "JOB-00001",
+    "ref": "",
+    "cust": 3,
+    "cname": "Meena S",
+    "cphone": "9123456780",
+    "brand": "Samsung",
+    "model": "A15",
+    "imei": "",
+    "acc": "",
+    "problem": "Display broken",
+    "diag": "",
+    "tech": "",
+    "d": "2026-11-19",
+    "est": null,
+    "st": "RECEIVED",
+    "labour": 30000,
+    "disc": 0,
+    "parts": 0,
+    "total": 30000,
+    "paid": 20000,
+    "done": null,
+    "dlv": null,
+    "wd": 0,
+    "notes": "",
+    "items": [],
+    "pays": [
+     {
+      "d": "2026-11-19",
+      "dir": "IN",
+      "mode": "CASH",
+      "amt": 20000,
+      "kind": "SERVICE_ADVANCE"
+     }
+    ]
+   }
+  ],
+  "expenses": [
+   {
+    "id": 1,
+    "d": "2026-11-19",
+    "cat": "Food",
+    "desc": "Tea",
+    "amt": 12000,
+    "mode": "CASH"
+   }
+  ],
+  "dash": {
+   "d": "2026-11-19",
+   "bills": 2,
+   "sales": 99700,
+   "service": 0,
+   "expenses": 12000,
+   "opening": 0,
+   "cash": 58000,
+   "dues": 59800,
+   "low": 1,
+   "open_jobs": 1,
+   "ready": 0
+  },
+  "shop": {
+   "shop_name": "SDJ Mobile Care",
+   "shop_tagline": "Mobiles \u2022 Accessories \u2022 Service",
+   "shop_address": "",
+   "shop_phone": "",
+   "shop_email": "",
+   "shop_gstin": "",
+   "invoice_footer": "Thank you for shopping at SDJ Mobile Care!",
+   "terms": "Goods once sold are returned or exchanged only as per shop policy. Warranty is as per manufacturer terms.",
+   "service_terms": "Please collect your device within 30 days of the delivery date. The shop is not responsible for data loss or for faults not related to the repair.",
+   "upi_id": "",
+   "invoice_prefix": "SDJ",
+   "job_prefix": "JOB",
+   "gst_enabled": true,
+   "prices_include_gst": true,
+   "round_off": true,
+   "service_gst_rate": 18,
+   "owner_approval": true,
+   "staff_discount_limit": 10,
+   "low_stock_default": 5,
+   "default_repair_warranty_days": 0,
+   "expense_categories": [
+    "Rent",
+    "Electricity",
+    "Salary",
+    "Transportation",
+    "Food",
+    "Internet",
+    "Maintenance",
+    "Packaging",
+    "Miscellaneous"
+   ],
+   "technicians": [
+    "Kumar",
+    "Arun"
+   ],
+   "walk_in": 1,
+   "inv_series": "SDJ-P1",
+   "job_series": "JOB-P1",
+   "fy": "26-27",
+   "inv_last": 0,
+   "job_last": 0,
+   "closed": [],
+   "business_date": "2026-11-19",
+   "pc": "e97ae30e2df9664b65301c6289834b83",
+   "server_time": "2026-11-19T17:44:53",
+   "device_no": 1,
+   "user_id": 1,
+   "history_days": 45,
+   "pc_version": "1.2.0"
+  },
+  "users": [
+   {
+    "id": 1,
+    "username": "admin",
+    "name": "Shop Owner",
+    "role": "ADMIN",
+    "perms": [
+     "accounting",
+     "audit_log",
+     "backup",
+     "billing",
+     "cancel_sale",
+     "collect_payment",
+     "customers",
+     "daily_closing",
+     "dashboard",
+     "discount_override",
+     "expenses",
+     "live_summary",
+     "products_edit",
+     "products_view",
+     "purchases",
+     "quick_sale",
+     "reopen_day",
+     "reports",
+     "returns",
+     "sales_history",
+     "service_history",
+     "services",
+     "settings",
+     "spare_parts",
+     "stock_adjust",
+     "stock_view",
+     "suppliers",
+     "users",
+     "view_profit"
+    ],
+    "hash": "pbkdf2_sha256$240000$948aa0f612c8b10c45e57e9e6e520dcb$e61b6d4665606f7edaec81b4f7825060576d009104d222340188c6c417b1ccf4"
+   }
+  ]
+ }
+}

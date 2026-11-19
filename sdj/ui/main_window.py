@@ -170,6 +170,14 @@ class MainWindow(QMainWindow):
         self.alert_pill.setCursor(Qt.PointingHandCursor)
         self.alert_pill.clicked.connect(lambda: self.navigate("stock", {"filter": "ALERT"}))
         lay.addWidget(self.alert_pill)
+        self.phone_pill = QToolButton()
+        self.phone_pill.setObjectName("AlertPill")
+        self.phone_pill.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.phone_pill.setCursor(Qt.PointingHandCursor)
+        self.phone_pill.setToolTip("Entries from a phone that need your check")
+        self.phone_pill.clicked.connect(self.show_sync_alerts)
+        self.phone_pill.hide()
+        lay.addWidget(self.phone_pill)
         self.day_pill = QLabel()
         self.day_pill.setObjectName("DayPill")
         lay.addWidget(self.day_pill)
@@ -290,6 +298,15 @@ class MainWindow(QMainWindow):
             self.day_pill.setProperty("state", "open")
         self.day_pill.style().unpolish(self.day_pill)
         self.day_pill.style().polish(self.day_pill)
+        try:
+            from ..core.auth import current_user
+            from ..core.phonesync import open_alert_count
+            k = open_alert_count() if current_user().can("settings") else 0
+        except Exception:
+            k = 0
+        self.phone_pill.setVisible(k > 0)
+        self.phone_pill.setText(f"{k} phone alert{'s' if k != 1 else ''}")
+        self.phone_pill.setIcon(icons.icon("smartphone", p.warn, 16))
         n = st["low_stock"] + st["out_of_stock"]
         self.alert_pill.setVisible(n > 0)
         self.alert_pill.setText(f"{n} stock alert{'s' if n != 1 else ''}")
@@ -298,6 +315,11 @@ class MainWindow(QMainWindow):
         self.status_db.setText(f"Data: {db}" if db else "")
         last = settings.get("last_backup_at") or ""
         self.status_backup.setText(f"Last backup: {last.replace('T', ' ')[:16]}" if last else "No backup yet")
+
+    def show_sync_alerts(self):
+        from .phone_link import SyncAlertsDialog
+        SyncAlertsDialog(self).exec()
+        self.update_header()
 
     def _on_settings_changed(self):
         self.brand_name.setText(settings.get("shop_name") or "SDJ Mobile Care")

@@ -128,6 +128,9 @@ def run(argv: list[str] | None = None) -> int:
             return 2
         open_database(db)
 
+    from .phone_link import start_bridge
+    start_bridge()                                   # phones can sync even while the login screen is open
+
     from ..core import settings
     from ..core.auth import user_count
     from ..core.backup import auto_backup_if_due, backup_now
@@ -170,6 +173,11 @@ def run(argv: list[str] | None = None) -> int:
     open_main()
 
     def on_quit():
+        try:
+            from ..core.syncserver import service
+            service().stop()
+        except Exception:
+            log.exception("stopping phone sync failed")
         try:
             from datetime import datetime, timedelta
             last = settings.get("last_backup_at") or ""

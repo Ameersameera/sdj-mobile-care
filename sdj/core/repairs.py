@@ -100,7 +100,8 @@ def _job_payment(s, job: ServiceJob, amount: Decimal, mode: str, direction: str 
     return pay
 
 
-def create_job(data: dict, *, advance=0, advance_mode: str = "CASH", client_ref: str | None = None) -> dict:
+def create_job(data: dict, *, advance=0, advance_mode: str = "CASH", client_ref: str | None = None,
+               job_no: str | None = None) -> dict:
     require("services")
     try:
         with session_scope() as s:
@@ -123,7 +124,8 @@ def create_job(data: dict, *, advance=0, advance_mode: str = "CASH", client_ref:
                 raise ValidationError("Estimated delivery date cannot be before today.")
             wdays = int(data.get("warranty_days") if data.get("warranty_days") is not None
                         else settings.get("default_repair_warranty_days") or 0)
-            job = ServiceJob(job_no=next_simple(s, "job_no", settings.get("job_prefix") or "JOB"), client_ref=client_ref,
+            job = ServiceJob(job_no=job_no or next_simple(s, "job_no", settings.get("job_prefix") or "JOB"),
+                             client_ref=client_ref,
                              customer_id=cust.id, customer_name=cust.name, customer_phone=cust.phone,
                              brand=(data.get("brand") or "").strip(), model=(data.get("model") or "").strip(),
                              imei=(data.get("imei") or "").strip(), accessories=(data.get("accessories") or "").strip(),
@@ -196,10 +198,12 @@ def update_job(job_id: int, data: dict) -> None:
             audit(s, "JOB_UPDATED", "service_job", job.id, {"job_no": job.job_no, "changes": changes})
 
 
-def add_part(job_id: int, product_id: int, quantity: int, unit_price=None) -> int:
+def add_part(job_id: int, product_id: int, quantity: int, unit_price=None, client_ref: str | None = None) -> int:
     """Use a spare part on a job: stock is deducted immediately."""
     require("services")
     with session_scope() as s:
+        if client_ref and s.scalar(select(ServiceItem.id).where(ServiceItem.client_ref == client_ref)):
+            raise DuplicateError("This spare part was already added.")
         job = _load_job(s, job_id)
         _assert_editable(job)
         if job.status in DONE_STATUSES:
@@ -219,7 +223,7 @@ def add_part(job_id: int, product_id: int, quantity: int, unit_price=None) -> in
         unit_cost = D(p.avg_cost)
         item = ServiceItem(job_id=job.id, product_id=p.id, product_name=p.name, quantity=qty, unit_price=price,
                            unit_cost=unit_cost, line_amount=q2(price * qty), cost_total=q2(unit_cost * qty),
-                           gst_rate=p.gst_rate, status="ACTIVE", added_date=bdate)
+                           gst_rate=p.gst_rate, status="ACTIVE", added_date=bdate, client_ref=client_ref)
         s.add(item)
         s.flush()
         apply_movement(s, p, -qty, "SERVICE_USE", business_date=bdate, ref_type="SERVICE", ref_id=job.id,

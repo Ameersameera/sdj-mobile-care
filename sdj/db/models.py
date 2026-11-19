@@ -386,6 +386,7 @@ class Expense(Base):
     amount = mapped_column(Money, nullable=False)
     payment_mode: Mapped[str] = mapped_column(String(12), default="CASH")
     notes: Mapped[str] = mapped_column(Text, default="")
+    client_ref: Mapped[str | None] = mapped_column(String(48), unique=True)
     status: Mapped[str] = mapped_column(String(8), default="ACTIVE", index=True)
     created_by: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
@@ -457,6 +458,7 @@ class ServiceItem(Base):
     taxable_value = mapped_column(Money, default=0, nullable=False)
     gst_amount = mapped_column(Money, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(10), default="ACTIVE")    # ACTIVE / REMOVED
+    client_ref: Mapped[str | None] = mapped_column(String(48), unique=True)
     added_date: Mapped[date] = mapped_column(Date, nullable=False)
     removed_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -517,3 +519,59 @@ class DailyClosing(Base):
     reopened_by_name: Mapped[str] = mapped_column(String(80), default="")
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime)
     reopen_reason: Mapped[str] = mapped_column(Text, default="")
+
+
+# ---------------------------------------------------------------- phone link (sync over the shop Wi-Fi)
+class SyncDevice(Base):
+    """A phone linked with a one-time code. It signs in as one user account and has its own bill series."""
+    __tablename__ = "sync_devices"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_uid: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    device_no: Mapped[int] = mapped_column(Integer, nullable=False)            # P1, P2 … in bill numbers
+    name: Mapped[str] = mapped_column(String(80), default="")
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    secret: Mapped[str] = mapped_column(String(100), nullable=False)          # AES-256 key (base64)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", index=True)   # ACTIVE / REMOVED
+    linked_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    linked_by: Mapped[str] = mapped_column(String(80), default="")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_ip: Mapped[str] = mapped_column(String(60), default="")
+    app_version: Mapped[str] = mapped_column(String(20), default="")
+    last_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # replay protection
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    removed_by: Mapped[str] = mapped_column(String(80), default="")
+
+
+class SyncOp(Base):
+    """Every entry received from a phone, so a resent entry is never saved twice."""
+    __tablename__ = "sync_ops"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    op_uid: Mapped[str] = mapped_column(String(48), unique=True, nullable=False)
+    device_id: Mapped[int] = mapped_column(ForeignKey("sync_devices.id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    made_at: Mapped[datetime | None] = mapped_column(DateTime)                 # on the phone
+    business_date: Mapped[date | None] = mapped_column(Date)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    status: Mapped[str] = mapped_column(String(10), default="DONE")            # DONE / FAILED / CONFLICT
+    result: Mapped[str] = mapped_column(Text, default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+
+
+class SyncAlert(Base):
+    """Something the owner should look at after a phone synced (last piece sold twice, closed day …)."""
+    __tablename__ = "sync_alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("sync_devices.id"))
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    details: Mapped[str] = mapped_column(Text, default="")
+    ref_type: Mapped[str] = mapped_column(String(12), default="")
+    ref_id: Mapped[int | None] = mapped_column(Integer)
+    ref_date: Mapped[date | None] = mapped_column(Date)
+    payload: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), default="OPEN", index=True)   # OPEN / RESOLVED
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    resolved_by: Mapped[str] = mapped_column(String(80), default="")
+    resolution: Mapped[str] = mapped_column(Text, default="")
+
