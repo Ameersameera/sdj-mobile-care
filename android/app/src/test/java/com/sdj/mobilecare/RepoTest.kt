@@ -45,6 +45,8 @@ class RepoTest {
         assertTrue(edited[0].no.startsWith("SDJ-P1/"))
         assertTrue(st.jobs.first().no.startsWith("JOB-P1-"))
         assertTrue(st.expenses.first().pending)
+        val d0 = before.dash!!
+        if (d0.date == st.businessDate) assertEquals(d0.bills + 3, st.dash!!.bills)      // 3 new bills (one edited)
 
         // the first sync attempt fails (no Wi-Fi) – nothing is lost, and the request has every entry once
         assertFalse(r.syncOnce())

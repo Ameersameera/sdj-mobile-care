@@ -145,13 +145,17 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         val serverById = sales.associateBy { it.id }
         val local = LinkedHashMap<String, Sale>()
         val voided = HashMap<Long, String>()
+        val newOnPhone = HashSet<String>()          // refs of bills that started as a new bill on this phone
         for (op in live) {
             when (op.str("k")) {
-                "sale.new" -> viewOf(op)?.let { local[op.str("ref")] = it }
+                "sale.new" -> viewOf(op)?.let { local[op.str("ref")] = it; newOnPhone += op.str("ref") }
                 "sale.edit" -> {
                     val t = op.obj("target")
                     val tref = t.str("ref")
-                    if (tref.isNotEmpty() && local.containsKey(tref)) local.remove(tref)
+                    if (tref.isNotEmpty() && local.containsKey(tref)) {
+                        local.remove(tref)
+                        if (tref in newOnPhone) newOnPhone += op.str("ref")
+                    }
                     else serverById[t.lng("id")]?.let { voided[it.id] = "edited" }
                     viewOf(op)?.let { local[op.str("ref")] = it }
                 }
@@ -287,7 +291,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             fun cashOf(pays: List<Pay>) = pays.filter { it.mode == "CASH" && it.status == "ACTIVE" }.sumOf { if (it.dir == "OUT") -it.amount else it.amount }
             if (sameDay) {
                 activeLocal.filter { it.date == bdate }.forEach { s ->
-                    if (opByRef[s.ref]?.str("k") == "sale.new") bills += 1
+                    if (s.ref in newOnPhone) bills += 1
                     salesT += s.total
                     cash += cashOf(s.pays)
                 }
@@ -752,9 +756,8 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             Crypto.seal(key, req, device.toByteArray()).put("d", device) to ops.map { it.str("id") }.toSet()
         }
         return try {
-            val raw = withContext(io) { postToPc(env) }
-            val ans = Crypto.unseal(key, raw, device.toByteArray())
-            mutex.withLock { applyAnswer(ans, sentIds) }
+            val ans = withContext(io) { Crypto.unseal(key, postToPc(env), device.toByteArray()) }
+            mutex.withLock { withContext(io) { applyAnswer(ans, sentIds) } }
             true
         } catch (e: PcError) {
             mutex.withLock {

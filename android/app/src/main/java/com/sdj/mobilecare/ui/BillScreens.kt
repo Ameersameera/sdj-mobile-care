@@ -323,7 +323,7 @@ fun BillEditor(ui: Ui, st: UiState, nav: Nav, quick: Boolean, editKey: String?) 
                         Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         TextButton(onClick = { pickCust = true }) { Text("Change", color = Info) }
                     }
-                    (customer as? CustChoice.Existing)?.c?.let { if (it.due > 0) Text("Old dues: ${Money.fmt(it.due)}", color = Warn, fontSize = 12.sp) }
+                    (customer as? CustChoice.Existing)?.c?.let { if (it.due > 0) Text("Pending dues (all bills): ${Money.fmt(it.due)}", color = Warn, fontSize = 12.sp) }
                 }
             }
             item {
