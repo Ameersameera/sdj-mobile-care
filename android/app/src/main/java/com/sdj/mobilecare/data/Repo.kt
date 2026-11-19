@@ -10,11 +10,31 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
-class UserError(message: String) : Exception(message)
+open class UserError(message: String) : Exception(message)
+
+/** Linking failed; [host] is the PC address that was tried (the app offers a browser test for it). */
+class LinkError(message: String, val host: String?, val port: Int) : UserError(message)
+
+/** The PC could not be reached; the message says why in shop words. */
+class PcUnreachable(message: String) : IOException(message)
+
+fun reachError(host: String, e: IOException): String = when (e) {
+    is SocketTimeoutException -> "The PC at $host did not answer. Usually Windows Firewall or an antivirus on the PC is " +
+        "blocking SDJ Mobile Care. On the PC open Settings → Phone link → 'Allow phone sync in Windows Firewall', then try again."
+    is NoRouteToHostException -> "This phone cannot reach the PC at $host. The Wi-Fi router may stop devices from talking " +
+        "to each other (guest Wi-Fi / AP isolation). Connect both to the main shop Wi-Fi."
+    is ConnectException -> if ((e.message ?: "").contains("refused", ignoreCase = true))
+        "The PC at $host refused the connection. Open SDJ Mobile Care on the PC (Settings → Phone link) and try again."
+    else "Could not connect to the PC at $host (${e.message}). Check that the phone and the PC are on the same Wi-Fi."
+    else -> "Could not reach the PC at $host (${e.javaClass.simpleName}). Is the phone on the shop Wi-Fi?"
+}
 
 data class PendingInfo(val id: String, val kind: String, val title: String, val at: String, val message: String = "")
 
@@ -685,6 +705,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         if (candidates.isEmpty()) throw UserError("Could not find the PC on this Wi-Fi. Open SDJ Mobile Care on the PC, connect " +
             "the phone to the shop Wi-Fi, or type the PC address shown in Settings → Phone link.")
         var lastError = "Could not reach the PC."
+        var lastHost: String? = null
         for ((host, knownPc) in candidates) {
             try {
                 val pcId = knownPc ?: withContext(io) { net.hello(host, port) }.str("pc")
@@ -713,10 +734,11 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             } catch (e: CryptoException) {
                 lastError = "The code is wrong or has expired. Create a new code on the PC."
             } catch (e: IOException) {
-                lastError = "Could not reach the PC at $host. Is the phone on the shop Wi-Fi?"
+                lastError = reachError(host, e)
+                lastHost = host
             }
         }
-        throw UserError(lastError)
+        throw LinkError(lastError, lastHost, port)
     }
 
     suspend fun unlink() = mutex.withLock {
@@ -771,7 +793,8 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             false
         } catch (e: Exception) {
             mutex.withLock {
-                sync = sync.copy(running = false, error = "PC not reachable – entries are safe on this phone and will sync on the shop Wi-Fi.")
+                val why = if (e is PcUnreachable && net.wifi() != null) "\nIf you are at the shop: ${e.message}" else ""
+                sync = sync.copy(running = false, error = "PC not reachable – entries are safe on this phone and will sync on the shop Wi-Fi.$why")
                 publish()
             }
             false
@@ -781,12 +804,14 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     private fun postToPc(env: JSONObject): JSONObject {
         val port = cfg.optInt("port", Net.PORT)
         val hosts = (listOf(cfg.str("last_host")) + cfg.arr("hosts").strings()).filter { it.isNotBlank() }.distinct()
+        var last: Pair<String, IOException>? = null
         for (h in hosts) {
             try {
                 val r = net.post(h, port, "/sdj/sync", env)
                 cfg.put("last_host", h)
                 return r
             } catch (e: IOException) {
+                last = h to e
                 continue
             }
         }
@@ -797,10 +822,11 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
                 cfg.put("last_host", h).put("hosts", JSONArray((listOf(h) + hosts).distinct().take(6)))
                 return r
             } catch (e: IOException) {
+                last = h to e
                 continue
             }
         }
-        throw IOException("PC not reachable")
+        throw PcUnreachable(last?.let { reachError(it.first, it.second) } ?: "PC not found on this Wi-Fi.")
     }
 
     private fun applyAnswer(ans: JSONObject, sentIds: Set<String>) {

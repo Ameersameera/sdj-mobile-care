@@ -1,7 +1,9 @@
 """Phone link: pairing, encrypted sync, entries saved exactly once, and the conflict rules."""
 import base64
 import json
+import os
 import socket
+import sys
 import sqlite3
 import urllib.request
 import uuid
@@ -252,6 +254,8 @@ def test_network_service_hello_sync_and_discovery(linked):
         base = f"http://127.0.0.1:{srv.port}"
         hello = json.loads(urllib.request.urlopen(base + "/sdj/hello", timeout=5).read())
         assert hello["pc"] == phonesync.pc_identity()
+        page = urllib.request.urlopen(base + "/", timeout=5).read().decode()      # test page for the phone browser
+        assert "phone sync is working" in page
         phone = linked["phone"]
         body = json.dumps(phone.envelope([phone.bill([dict(p=linked["charger"], q=1, price=40000)],
                                                      {"CASH": 40000})])).encode()
@@ -266,3 +270,31 @@ def test_network_service_hello_sync_and_discovery(linked):
         assert data.startswith(b"SDJ!") and json.loads(data[4:])["port"] == phonesync.PORT
     finally:
         srv.stop()
+
+
+def test_firewall_helper_builds_the_allow_script():
+    from sdj.core import winfirewall
+    s = winfirewall.script(r"C:\Program Files\SDJ Mobile Care\SDJMobileCare.exe")
+    assert "-Action Allow -Program $p -Profile Any" in s
+    assert "-Protocol TCP -LocalPort 47810" in s and "-Protocol UDP -LocalPort 47811" in s
+    assert "Remove-NetFirewallRule" in s and "C:\\Program Files\\SDJ Mobile Care\\SDJMobileCare.exe" in s
+    if not winfirewall.supported():
+        assert winfirewall.rule_present() is None
+        assert winfirewall.allow()[0] is False
+
+
+@pytest.mark.skipif(not (sys.platform.startswith("win") and os.environ.get("CI")), reason="Windows CI runner only")
+def test_firewall_rules_are_really_created_on_windows():
+    """GitHub's Windows runner is an admin: the same script the button runs must create working rules."""
+    import subprocess
+    from sdj.core import winfirewall
+    enc = base64.b64encode(winfirewall.script().encode("utf-16-le")).decode()
+    r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                       capture_output=True, text=True, timeout=180)
+    try:
+        assert winfirewall.rule_present() is True, r.stdout + r.stderr
+        ok, msg = winfirewall.allow(timeout_s=90)          # the button itself (no prompt on the runner)
+        assert isinstance(ok, bool) and msg
+    finally:
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Remove-NetFirewallRule -DisplayName '{winfirewall.RULE}*'"],
+                       capture_output=True, timeout=120)

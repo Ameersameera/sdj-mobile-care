@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from ..core import auth, phonesync, syncserver
+from ..core import auth, phonesync, syncserver, winfirewall
 from ..output.fmt import dt
 from .bus import bus, changed, toast
 from .widgets import Card, Col, DataTable, button, confirm, error, hbox, label, run_safely, scroll_wrap
@@ -302,6 +302,16 @@ class PhoneLinkTab(QWidget):
         self.addr_lbl = label("", "Muted", wrap=True)
         st.add(self.status_lbl)
         st.add(self.addr_lbl)
+        self.fw_lbl = label("", wrap=True)
+        self.fw_btn = button("Allow phone sync in Windows Firewall", "primary", "shield-check", self.fix_firewall)
+        self.fw_row = QWidget()
+        self.fw_row.setLayout(hbox(self.fw_lbl, None, self.fw_btn))
+        self.fw_row.setVisible(winfirewall.supported())
+        st.add(self.fw_row)
+        self.test_lbl = label("", "Muted", wrap=True)
+        self.test_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        st.add(self.test_lbl)
+        self._fw_ok = None
         self.autostart = QCheckBox("Start SDJ Mobile Care when Windows starts (so phones can sync after a power cut "
                                    "without anyone opening the app)")
         self.autostart.setVisible(autostart_supported())
@@ -366,11 +376,33 @@ class PhoneLinkTab(QWidget):
 
     def _refresh_if_open(self) -> None:
         if self.content is not None and self.stack.currentWidget() is self.content:
-            self.refresh()
+            self.refresh(light=True)
 
-    def refresh(self) -> None:
+    def check_firewall(self) -> None:
+        self._fw_ok = winfirewall.rule_present()
+        self._show_firewall()
+
+    def _show_firewall(self) -> None:
+        if not winfirewall.supported():
+            return
+        if self._fw_ok:
+            self.fw_lbl.setText("✓ Windows Firewall allows phone sync.")
+            self.fw_btn.setText("Allow again")
+        else:
+            self.fw_lbl.setText("⚠ Windows Firewall may be blocking phones (common reason for 'Could not reach the PC'). "
+                                "Click the button – Windows will ask for permission.")
+            self.fw_btn.setText("Allow phone sync in Windows Firewall")
+
+    def fix_firewall(self) -> None:
+        ok, msg = winfirewall.allow()
+        self.check_firewall()
+        (toast if ok else (lambda m: error(self, m)))(msg)
+
+    def refresh(self, light: bool = False) -> None:
         if self.content is None:
             return
+        if not light and winfirewall.supported():
+            self.check_firewall()
         svc = syncserver.service()
         ips = phonesync.local_ips()
         if svc.running:
@@ -382,6 +414,15 @@ class PhoneLinkTab(QWidget):
         self.addr_lbl.setText(("This PC's address on the network: " + ", ".join(ips) + f"  (port {phonesync.PORT}) – "
                                "type it in the phone only if it cannot find the PC by itself.") if ips else
                               "This PC is not connected to a network right now.")
+        self.test_lbl.setText((f"Check from the phone: open  http://{ips[0]}:{phonesync.PORT}  in Chrome – it should say "
+                               "'SDJ Mobile Care phone sync is working'. If it does not open, the firewall, an antivirus "
+                               "or the Wi-Fi router is blocking it.") if ips and svc.running else "")
+        self.dev_table.set_rows(phonesync.list_devices())
+        n = phonesync.open_alert_count()
+        self.alert_lbl.setText(f"{n} open alert{'s' if n != 1 else ''}" if n else "No open alerts – all good.")
+        self._show_code(phonesync.active_code())
+        if light:
+            return
         cur = self.user_combo.currentData()
         self.user_combo.clear()
         me = auth.current_user()
@@ -390,19 +431,16 @@ class PhoneLinkTab(QWidget):
                 self.user_combo.addItem(f"{u['full_name'] or u['username']} ({u['role_label']})", u["id"])
         idx = self.user_combo.findData(cur if cur else me.id)
         self.user_combo.setCurrentIndex(max(idx, 0))
-        self.dev_table.set_rows(phonesync.list_devices())
-        n = phonesync.open_alert_count()
-        self.alert_lbl.setText(f"{n} open alert{'s' if n != 1 else ''}" if n else "No open alerts – all good.")
-        self._show_code(phonesync.active_code())
 
     def _show_code(self, info: dict | None) -> None:
         self.code_box.setVisible(info is not None)
         if info is None:
             self.timer.stop()
             return
-        self.code_lbl.setText(info["display"])
+        if self.code_lbl.text() != info["display"]:
+            self.code_lbl.setText(info["display"])
+            self.qr.set_data(info["qr"])
         self.code_for.setText(f"Phone will sign in as: {info['username']}")
-        self.qr.set_data(info["qr"])
         self._expires = info["expires"]
         self._tick()
         self.timer.start(1000)
@@ -423,6 +461,11 @@ class PhoneLinkTab(QWidget):
             svc = syncserver.service()
             if not svc.running:
                 error(self, svc.error or "Phone sync could not start on this PC.")
+            elif winfirewall.supported() and winfirewall.rule_present() is False and confirm(
+                    self, "Allow phones through Windows Firewall?",
+                    "Windows Firewall has no rule for phone sync yet, so the phone may not reach this PC. "
+                    "Allow it now? Windows will ask for permission once."):
+                self.fix_firewall()
             self.refresh()
 
     def cancel_code(self) -> None:

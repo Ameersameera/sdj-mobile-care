@@ -36,8 +36,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802
-        if self.path.rstrip("/") == "/sdj/hello":
+        path = self.path.split("?")[0].rstrip("/")
+        if path == "/sdj/hello":
             self._send(200, phonesync.hello())
+        elif path in ("", "/sdj"):
+            import html
+            name = html.escape(phonesync.hello()["name"])
+            page = (f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+                    f"<title>SDJ phone sync</title></head><body style='font-family:sans-serif;padding:24px'>"
+                    f"<h2 style='color:#1E7B34'>&#10004; SDJ Mobile Care phone sync is working</h2>"
+                    f"<p>{name}</p><p>This phone can reach the shop PC. Now link it in the SDJ Mobile Care phone app "
+                    f"(Scan QR from PC).</p></body></html>").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(page)
         else:
             self._send(404, {"error": "Not found", "code": "not_found"})
 
