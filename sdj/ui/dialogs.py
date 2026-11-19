@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QVBoxLayout, QWidget)
 
 from ..core import inventory, parties, sales, settings
+from ..core.auth import current_user
 from ..core.errors import BusinessError, ValidationError
 from ..db.base import D, q2
 from ..output.fmt import d_only, dt, inr
@@ -211,15 +212,58 @@ class ImeiSelectDialog(QDialog):
         self.accept()
 
 
+# ================================================================ categories
+class CategoryDialog(FormDialog):
+    """Add a product category, or rename / change the IMEI default of an existing one."""
+
+    def __init__(self, parent, category: dict | None = None, group: str | None = None):
+        super().__init__(parent, "Edit category" if category else "Add category", 560)
+        self.category = category
+        self.name = QLineEdit(category["name"] if category else "")
+        self.name.setMaxLength(60)
+        self.name.setPlaceholderText("e.g. Smart TV Remotes, Car Chargers, Back Panels")
+        self.group = QComboBox()
+        for g, lab in inventory.GROUP_LABELS.items():
+            self.group.addItem(lab, g)
+        start = category["group"] if category else (group or "ACCESSORY")
+        self.group.setCurrentIndex(max(self.group.findData(start), 0))
+        self.imei = QCheckBox("Track IMEI / serial number for every unit")
+        self.imei.setChecked(category["requires_imei"] if category else start == "MOBILE")
+        self.form.addRow("Category name *", self.name)
+        self.form.addRow("Group", self.group)
+        self.form.addRow("", self.imei)
+        used = category.get("products", 0) if category else 0
+        if used:
+            self.group.setEnabled(False)
+            self.form.addRow("", label(f"{used} product(s) use this category, so the group stays the same.",
+                                       "Muted", wrap=True))
+        else:
+            self.group.currentIndexChanged.connect(lambda: self.imei.setChecked(self.group.currentData() == "MOBILE"))
+        self.form.addRow("", label("The group decides the default GST rate and where these sales appear in reports. "
+                                   "IMEI tracking is the starting choice for new products in this category.",
+                                   "Muted", wrap=True))
+        self.finish_layout()
+        self.name.setFocus()
+
+    def on_save(self):
+        if self.category:
+            inventory.update_category(self.category["id"], self.name.text(), self.group.currentData(),
+                                      self.imei.isChecked())
+            self.result_id = self.category["id"]
+        else:
+            self.result_id = inventory.add_category(self.name.text(), self.group.currentData(), self.imei.isChecked())
+        changed("products")
+        toast("Category saved")
+
+
 # ================================================================ products
 class ProductDialog(FormDialog):
     def __init__(self, parent, product_id: int | None = None, group: str | None = None, name: str = ""):
         super().__init__(parent, "Edit product" if product_id else "Add product", 620)
         self.product_id = product_id
         p = inventory.get_product(product_id) if product_id else {}
-        self.cats = inventory.list_categories()
-        if group:
-            self.cats = [c for c in self.cats if c["group"] == group] + [c for c in self.cats if c["group"] != group]
+        self._group_pref = group
+        self._product_cat = p.get("category_id") if p else None
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(9)
@@ -229,12 +273,15 @@ class ProductDialog(FormDialog):
         self.name = QLineEdit(p.get("name", name))
         self.brand = QLineEdit(p.get("brand", ""))
         self.category = QComboBox()
-        for c in self.cats:
-            self.category.addItem(f"{c['name']}  ({c['group_label']})", c)
-        if p:
-            for i in range(self.category.count()):
-                if self.category.itemData(i)["id"] == p["category_id"]:
-                    self.category.setCurrentIndex(i)
+        self._fill_categories(self._product_cat)
+        self.cat_add = button("", "", "plus", self._add_category, tip="Add a new category")
+        self.cat_add.setVisible(bool(current_user() and current_user().can("products_edit")))
+        cat_box = QWidget()
+        cat_row = QHBoxLayout(cat_box)
+        cat_row.setContentsMargins(0, 0, 0, 0)
+        cat_row.setSpacing(6)
+        cat_row.addWidget(self.category, 1)
+        cat_row.addWidget(self.cat_add)
         self.model = QLineEdit(p.get("model_number", ""))
         self.barcode = QLineEdit(p.get("barcode", ""))
         self.barcode.setPlaceholderText("Scan or type (optional)")
@@ -265,7 +312,7 @@ class ProductDialog(FormDialog):
         self.track.setChecked(p.get("track_imei", False))
         self.desc = multiline("Description (optional)", 52)
         self.desc.setPlainText(p.get("description", ""))
-        rows = [("Product ID", self.code, "Brand", self.brand), ("Product name *", self.name, "Category *", self.category),
+        rows = [("Product ID", self.code, "Brand", self.brand), ("Product name *", self.name, "Category *", cat_box),
                 ("Model number", self.model, "Barcode", self.barcode),
                 ("Purchase price", self.purchase, "Selling price *", self.selling),
                 ("Minimum stock", self.min_stock, "Warranty", self.warranty),
@@ -304,6 +351,33 @@ class ProductDialog(FormDialog):
             self._sync()
         self.finish_layout()
         self.name.setFocus()
+
+    def _fill_categories(self, select_id: int | None = None) -> None:
+        cats = inventory.list_categories()
+        if self._product_cat and all(c["id"] != self._product_cat for c in cats):
+            cats.append(inventory.get_category(self._product_cat))     # editing a product whose category is hidden
+        g = self._group_pref
+        if g:
+            cats = [c for c in cats if c["group"] == g] + [c for c in cats if c["group"] != g]
+        self.cats = cats
+        self.category.blockSignals(True)
+        self.category.clear()
+        for c in cats:
+            hidden = "" if c.get("is_active", True) else "  – hidden"
+            self.category.addItem(f"{c['name']}  ({c['group_label']}){hidden}", c)
+        idx = next((i for i, c in enumerate(cats) if c["id"] == select_id), 0) if select_id else 0
+        self.category.setCurrentIndex(idx)
+        self.category.blockSignals(False)
+
+    def _add_category(self):
+        c = self.category.currentData()
+        dlg = CategoryDialog(self, group=c["group"] if c else (self._group_pref or "ACCESSORY"))
+        if dlg.exec() == QDialog.Accepted and dlg.result_id:
+            self.category_added(dlg.result_id)
+
+    def category_added(self, category_id: int) -> None:
+        self._fill_categories(category_id)
+        self._cat_changed()
 
     def _cat_changed(self):
         c = self.category.currentData()

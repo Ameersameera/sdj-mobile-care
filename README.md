@@ -29,7 +29,7 @@ All 20 screens are in `docs/screenshots/`. Printed documents generated from the 
 | **New Billing (POS)** | Product search, barcode scan, IMEI scan, multi-item bills, item & bill discounts, GST (inclusive / exclusive, CGST + SGST), round-off, cash / UPI / card / other, split, partial and credit payments, 58 mm / 80 mm thermal and A4 invoices, PDF, UPI "scan to pay" QR |
 | **Quick Sale** | Product → quantity → price → payment mode → Save. Stock, revenue and profit update instantly |
 | **Sales History** | Search by invoice, customer, phone, product or IMEI; view, reprint, collect dues, cancel (same open day) or return |
-| **Products** | Mobiles, accessories, spare parts with every field from the spec, Excel import / export, IMEI & warranty tracking, warranty claims |
+| **Products** | Mobiles, accessories, spare parts with every field from the spec, your own categories, Excel import / export, IMEI & warranty tracking, warranty claims |
 | **Stock Management** | Live stock & valuation (weighted average cost), low / out-of-stock alerts, full movement history, authorised adjustments with reason |
 | **Purchases** | Supplier invoices with GST, discount, freight (landed cost), IMEI entry, part payments; cancel if stock is still there |
 | **Mobile Services** | Job intake & job card, status (Received → Inspection → Waiting for parts → In progress → Ready → Delivered / Cancelled), spare parts used (stock deducted immediately), labour, advance, delivery & service bill, repair warranty |
@@ -42,15 +42,15 @@ All 20 screens are in `docs/screenshots/`. Printed documents generated from the 
 | **Daily Closing** | Owner-controlled *Close Day* at any time: product-wise, category, service, financial, payment report, cash reconciliation, closing stock; PDF + Excel; record locked; audited reopen |
 | **Monthly / Yearly Reports** | All totals, product-wise and service-wise reports, payment breakdown, dues, closing stock & valuation; calendar or Indian financial year; PDF / Excel / CSV |
 | **Accounting** | Profit & loss, GST summary, customer dues with ageing, supplier dues, cash & bank book, stock valuation |
-| **Settings** | Shop details & logo, invoice numbering, GST, printers, backups / restore, stock & service defaults, staff accounts & roles, password, light / dark theme, audit log |
+| **Settings** | Shop details & logo, invoice numbering, GST, printers, backups / restore, stock & service defaults, product categories (add / rename / hide), staff accounts & roles, password, light / dark theme, audit log |
 
 ---
 
 ## 2. Install and run on Windows 10 / 11
 
 ### Option A – Windows app (recommended)
-1. Download `SDJMobileCare_Setup_1.0.0.exe` from the repository's **Releases** page (or build it yourself – see section 7).
-2. Run `SDJMobileCare_Setup_1.0.0.exe` (installer) – or open `dist\SDJMobileCare\SDJMobileCare.exe` directly.
+1. Download `SDJMobileCare_Setup_1.1.0.exe` from the repository's **Releases** page (or build it yourself – see section 7).
+2. Run `SDJMobileCare_Setup_1.1.0.exe` (installer) – or open `dist\SDJMobileCare\SDJMobileCare.exe` directly.
 3. On the **first start** a short setup asks for the shop details (leave blank whatever you don't have yet – nothing is
    invented) and creates the **owner / admin login**.
 
@@ -161,7 +161,7 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 2. Optional: install **Inno Setup 6** for the setup file.
 3. Double-click **`build_windows.bat`**. It creates a virtual environment, installs everything, runs all tests and builds:
    * `dist\SDJMobileCare\SDJMobileCare.exe` (the app – copy this whole folder anywhere), and
-   * `dist\installer\SDJMobileCare_Setup_1.0.0.exe` (if Inno Setup is installed).
+   * `dist\installer\SDJMobileCare_Setup_1.1.0.exe` (if Inno Setup is installed).
 
 ### Option B – let GitHub build it (no Python needed on your PC)
 1. Create a GitHub repository and upload this folder (including `.github/workflows/build-windows.yml`).

@@ -1,4 +1,5 @@
-"""Settings: shop details & logo, invoice/GST, printing, backup/restore, stock & service, users, audit log."""
+"""Settings: shop details & logo, invoice/GST, printing, backup/restore, stock & service, product categories,
+users, audit log."""
 from __future__ import annotations
 
 import shutil
@@ -10,11 +11,13 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFil
                                QLabel, QLineEdit, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ... import APP_TITLE, APP_VERSION, config
-from ...core import audit, auth, backup, settings
+from ...core import audit, auth, backup, inventory, settings
 from ...core.auth import ROLE_LABELS, ROLES, current_user
 from ...output.fmt import dt
 from ..bus import bus, changed, toast
+from ..dialogs import CategoryDialog
 from ..printing import available_printers, open_folder, show_pdf
+from ..theme import current
 from ..widgets import (Card, Col, DataTable, FormDialog, MoneySpin, Page, button, confirm, error, hbox, info, label,
                        multiline, run_safely, scroll_wrap)
 
@@ -91,6 +94,7 @@ class SettingsPage(Page):
             self._backup_tab()
         if self.admin:
             self._stock_tab()
+            self._categories_tab()
             self._users_tab()
         self._account_tab()
         self._appearance_tab()
@@ -392,6 +396,60 @@ class SettingsPage(Page):
                                expense_categories=cats or settings.EXPENSE_CATEGORIES))
         toast("Saved")
 
+    # ------------------------------------------------------------ product categories
+    def _categories_tab(self):
+        c = Card("Product categories", "pick these when adding a product · the group sets the default GST and the report section")
+        muted = lambda r: current().muted if not r["is_active"] else None
+        self.c_table = DataTable([Col("name", "Category", width=240, bold=True, color=muted),
+                                  Col("group_label", "Group", width=150, color=muted),
+                                  Col("imei_label", "IMEI tracking", width=120, color=muted),
+                                  Col("products", "Products", "int", 90),
+                                  Col("status", "Status", width=90, color=muted)],
+                                 placeholder="Search categories…", stretch="name", sortable=False)
+        self.c_table.setMinimumHeight(540)
+        self.c_table.activated.connect(self.edit_category)
+        self.c_hidden = QCheckBox("Show hidden categories")
+        self.c_hidden.toggled.connect(self.refresh_categories)
+        c.add(self.c_table)
+        c.add(hbox(button("Add category", "primary", "plus", self.add_category),
+                   button("Edit", "", "pencil", lambda: self.edit_category(self.c_table.selected())),
+                   button("Hide / show again", "", "eye", self.toggle_category), None, self.c_hidden))
+        c.add(label("Categories are never deleted – old bills and reports keep their category. Hide the ones you "
+                    "don't use; they disappear from the Add product list.", "Muted", wrap=True))
+        self._add("categories", _tab(c), "Categories")
+
+    def refresh_categories(self):
+        rows = inventory.list_categories(active_only=not self.c_hidden.isChecked(), with_counts=True)
+        for r in rows:
+            r["imei_label"] = "Yes" if r["requires_imei"] else "—"
+            r["status"] = "Active" if r["is_active"] else "Hidden"
+        self.c_table.set_rows(rows)
+
+    def add_category(self):
+        if CategoryDialog(self).exec() == QDialog.Accepted:
+            self.refresh_categories()
+
+    def edit_category(self, row):
+        if not row:
+            info(self, "Categories", "Select a category first.")
+            return
+        if CategoryDialog(self, row).exec() == QDialog.Accepted:
+            self.refresh_categories()
+
+    def toggle_category(self):
+        row = self.c_table.selected()
+        if not row:
+            info(self, "Categories", "Select a category first.")
+            return
+        hide = row["is_active"]
+        if hide and row["products"] and not confirm(
+                self, "Hide category", f"Hide '{row['name']}'?\n\nIts {row['products']} product(s) stay exactly as they "
+                                       "are – only new products can't pick this category.", yes="Hide"):
+            return
+        if run_safely(self, inventory.set_category_active, row["id"], not hide, topic="products",
+                      success="Category hidden" if hide else "Category visible again"):
+            self.refresh_categories()
+
     # ------------------------------------------------------------ users
     def _users_tab(self):
         c = Card("Staff accounts & roles")
@@ -481,6 +539,8 @@ class SettingsPage(Page):
 
     # ------------------------------------------------------------ refresh
     def refresh(self):
+        if hasattr(self, "c_table"):
+            self.refresh_categories()
         if hasattr(self, "b_table"):
             self.b_table.set_rows(backup.list_backups())
         if hasattr(self, "u_table"):
