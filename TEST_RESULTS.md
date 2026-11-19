@@ -1,6 +1,6 @@
 # Test results – SDJ Mobile Care
 
-**Result: 48 passed in 55.38s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
+**Result: 76 passed in 96.03s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
 
 Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 
@@ -49,6 +49,52 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_role_permissions` | Role permissions: sales staff cannot close day, adjust stock or create users; wrong password rejected |
 | ✅ PASSED | `test_password_hashing` | Passwords stored as salted PBKDF2 hashes |
 
+## Specification workflow  (`test_workflow.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_spec_section6_charger_example` | Spec §6: 50 chargers → sell 1 → 49 left; sell 2 → 47 left, 3 sold, revenue ₹1,200 |
+| ✅ PASSED | `test_section7_quick_sale_two_products` | Spec §7: Product A ₹500 + Product B ₹1,000 = ₹1,500, product-wise revenue kept separately |
+| ✅ PASSED | `test_full_workflow` | Spec §23 – the full 20-step workflow (details below) |
+
+## Product categories  (`test_categories.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_added_category_is_listed_inside_its_group` | A new category appears inside its own group (Mobile → Accessories → Spare parts) |
+| ✅ PASSED | `test_bad_or_duplicate_names_are_rejected` | Empty, too long, duplicate (any case / spacing) or hidden-duplicate names are refused |
+| ✅ PASSED | `test_edit_rename_imei_and_group_rules` | Rename and IMEI default always allowed; the group is locked once products use the category |
+| ✅ PASSED | `test_hidden_category_keeps_old_products_but_not_new_ones` | Hidden categories stay on old products but can't be picked for new ones |
+| ✅ PASSED | `test_last_visible_category_cannot_be_hidden` | At least one category always stays visible |
+| ✅ PASSED | `test_category_changes_are_audited` | Add / edit / hide / show are written to the audit log |
+| ✅ PASSED | `test_sales_staff_cannot_change_categories` | Sales staff can't add or hide categories |
+
+## Data reset & undo  (`test_reset.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_preview_matches_reset_and_needs_owner_password` | Preview equals the real reset; a wrong password or missing RESET word stops it |
+| ✅ PASSED | `test_sales_reset_for_a_date_range_restores_stock_and_bills` | Date-range sales reset gives stock back and repairs older bills that lost a return |
+| ✅ PASSED | `test_reset_all_sales_frees_phones_and_restarts_invoice_numbers` | All-time sales reset frees sold phones and restarts invoice numbers at 00001 |
+| ✅ PASSED | `test_purchase_reset_is_blocked_when_its_stock_was_sold` | A purchase whose phones were sold can't be removed alone; together with its sales it can |
+| ✅ PASSED | `test_repairs_reset_returns_parts_to_stock` | Repair reset returns the spare parts used to stock |
+| ✅ PASSED | `test_stock_reset_sets_everything_to_zero_with_history` | Stock reset sets every product to 0 and keeps the history as adjustments |
+| ✅ PASSED | `test_closed_day_figures_are_refreshed_and_closings_can_be_removed` | Closed days keep their counted cash but get updated figures; closings can be removed |
+| ✅ PASSED | `test_customers_and_suppliers_only_go_when_nothing_refers_to_them` | Customers / suppliers are removed only when nothing refers to them |
+| ✅ PASSED | `test_full_reset_keeps_settings_users_and_categories` | Full reset empties all data but keeps settings, logins, categories and the audit log |
+| ✅ PASSED | `test_undo_last_reset_brings_everything_back` | Undo last reset restores the backup taken just before the reset |
+| ✅ PASSED | `test_only_the_owner_can_reset` | Managers and staff can't preview or run a reset |
+| ✅ PASSED | `test_bad_selections_are_rejected` | Empty choice, reversed or half-filled dates are refused; Products takes its history along |
+
+## Edit bill & owner approval  (`test_edit_approval.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_edit_bill_keeps_the_invoice_number` | An edited bill keeps its number; the old version is kept as …-E1 (cancelled); stock and IMEI follow |
+| ✅ PASSED | `test_edit_is_refused_after_return_or_closing` | Bills with returns, or on a closed day, can't be edited |
+| ✅ PASSED | `test_staff_cancel_needs_approval_and_it_is_audited` | Staff cancel needs owner approval for that one action; the audit log records who approved |
+| ✅ PASSED | `test_staff_discount_limit` | Staff discounts above the limit need approval; the owner has no limit; 0 = no limit |
+
 ## Desktop interface (offscreen GUI tests)  (`test_gui_smoke.py`)
 
 | Result | Test | What it proves |
@@ -64,44 +110,8 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_purchase_screen_adds_stock` | GUI: purchase entry adds stock and supplier dues |
 | ✅ PASSED | `test_returns_screen_refund` | GUI: return with refund from the Returns screen |
 | ✅ PASSED | `test_customer_dues_collection_screen` | GUI: customer dues shown and filtered |
-
-## Specification workflow  (`test_workflow.py`)
-
-| Result | Test | What it proves |
-|---|---|---|
-| ✅ PASSED | `test_spec_section6_charger_example` | Spec §6: 50 chargers → sell 1 → 49 left; sell 2 → 47 left, 3 sold, revenue ₹1,200 |
-| ✅ PASSED | `test_section7_quick_sale_two_products` | Spec §7: Product A ₹500 + Product B ₹1,000 = ₹1,500, product-wise revenue kept separately |
-| ✅ PASSED | `test_full_workflow` | Spec §23 – the full 20-step workflow (details below) |
-
-## The 20-step workflow (spec section 23) – `test_full_workflow`
-
-| # | Step | Verified result |
-|---|---|---|
-| 1–3 | Add 50 chargers (₹250/₹400), 20 earphones (₹150/₹300), 10 displays (₹800/₹1,000) | opening stock recorded |
-| 4 | Sell 2 chargers (quick sale, cash) | bill ₹800 |
-| 5 | Sell 3 earphones (billing, UPI) | bill ₹900, fully paid |
-| 6 | Sell 1 display (cash) | bill ₹1,000 |
-| 7 | Verify stock deduction | chargers 48 · earphones 17 · displays 9 |
-| 8 | Verify product-wise sales | 2 × ₹800 · 3 × ₹900 · 1 × ₹1,000 |
-| 9 | Verify profit | COGS ₹1,750 · gross profit ₹950 |
-| 10–12 | Repair job, one display used (charged ₹1,000), labour ₹500 | job total ₹1,500 |
-| 13 | Verify spare stock deduction | displays 8 |
-| 14 | Verify service income | labour ₹500 + parts ₹1,000 = ₹1,500; parts profit ₹200 |
-| 15 | Daily expenses | ₹200 food (cash) + ₹300 transport (UPI) |
-| 16 | Verify net profit | net sales ₹3,700 · COGS ₹2,550 · gross profit ₹1,150 · **net operating profit ₹1,150** · total revenue ₹4,200 (no double counting) |
-| 17 | Close the business day | expected cash ₹3,100 = ₹3,300 cash received − ₹200 cash expense; difference ₹0; record locked; backup taken; next entries go to the next day; stock carried forward |
-| 18 | Daily PDF | valid PDF generated |
-| 19 | Monthly report | revenue ₹4,200 · gross profit ₹1,150 · net profit ₹1,150 · service ₹1,500 · closing stock ₹20,950 (48×₹250 + 17×₹150 + 8×₹800); PDF, Excel, CSV exported |
-| 20 | Verify all calculations | product-wise sales sum to net sales; every product: opening + purchased − sold − service + returned + adjusted = closing; A4, 80 mm and 58 mm invoices generated |
-
-## Built application self-test
-
-The PyInstaller build was produced from `sdj_mobile_care.spec` and its built-in self-test (`SDJMobileCare --self-test`) passed:
-database creation, sale with stock deduction, repair job, invoice / receipt / service-bill PDFs, daily closing with PDF and backup
-(net operating profit ₹1,000.00 as expected), Excel export, Qt PDF module, and all 20 screens opening.
-The GitHub workflow and `build_windows.bat` run the same self-test on the Windows build.
-
-## Sample database consistency
-
-`sample_data/sdj_sample.db` (60 days, ~395 bills, ~143 repair jobs, 60 closings): for every product the stock quantity equals
-the sum of its stock-movement history (0 mismatches).
+| ✅ PASSED | `test_settings_categories_tab_add_hide_show` | Settings → Categories: add, hide and show again through the real screen |
+| ✅ PASSED | `test_product_dialog_plus_button_adds_category` | Add product → + creates a category and the product is saved in it |
+| ✅ PASSED | `test_reset_tab_rules_preview_and_run` | Settings → Reset: tick rules, preview and a confirmed reset through the real screen |
+| ✅ PASSED | `test_billing_edit_mode_keeps_the_invoice_number` | Sales History → Edit bill opens the bill in Billing; saving keeps the invoice number |
+| ✅ PASSED | `test_staff_gets_owner_approval_to_cancel` | Staff cancel works with owner approval; the button hides when approval is switched off |

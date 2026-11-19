@@ -72,7 +72,8 @@ class StockPage(Page):
         super().__init__(parent)
         u = current_user()
         self.show_cost = u.can("view_profit")
-        self.can_adjust = u.can("stock_adjust")
+        from ..widgets import approval_enabled
+        self.can_adjust = u.can("stock_adjust") or approval_enabled()
         row = hbox()
         self.k_products = KpiCard("Products", "boxes", compact=True)
         self.k_qty = KpiCard("Units in stock", "layers", compact=True)

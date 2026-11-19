@@ -27,7 +27,12 @@ class DuplicateError(BusinessError):
 
 
 class PermissionDenied(BusinessError):
-    pass
+    """*perm* names the missing permission, so the screen can offer owner / manager approval."""
+
+    def __init__(self, message: str = "You do not have permission for this action. Please ask the owner/admin.",
+                 perm: str | None = None):
+        super().__init__(message)
+        self.perm = perm
 
 
 class NotFoundError(BusinessError):

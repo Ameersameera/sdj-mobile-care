@@ -1,5 +1,5 @@
-"""Settings: shop details & logo, invoice/GST, printing, backup/restore, stock & service, product categories,
-users, audit log."""
+"""Settings: shop details & logo, invoice/GST, printing, backup/restore, data reset, stock & service, product
+categories, users & owner approval, audit log."""
 from __future__ import annotations
 
 import shutil
@@ -11,15 +11,15 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFil
                                QLabel, QLineEdit, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ... import APP_TITLE, APP_VERSION, config
-from ...core import audit, auth, backup, inventory, settings
+from ...core import audit, auth, backup, inventory, reset, settings
 from ...core.auth import ROLE_LABELS, ROLES, current_user
 from ...output.fmt import dt
 from ..bus import bus, changed, toast
 from ..dialogs import CategoryDialog
 from ..printing import available_printers, open_folder, show_pdf
 from ..theme import current
-from ..widgets import (Card, Col, DataTable, FormDialog, MoneySpin, Page, button, confirm, error, hbox, info, label,
-                       multiline, run_safely, scroll_wrap)
+from ..widgets import (Card, Col, DataTable, DateEdit, FormDialog, MoneySpin, Page, button, confirm, error, hbox, info,
+                       label, multiline, run_safely, scroll_wrap)
 
 
 def _tab(*widgets) -> QWidget:
@@ -34,6 +34,39 @@ def _tab(*widgets) -> QWidget:
             lay.addLayout(w)
     lay.addStretch(1)
     return scroll_wrap(host)
+
+
+class ResetConfirmDialog(QDialog):
+    """Last step of a reset: what goes, the owner's password and the word RESET."""
+
+    def __init__(self, parent, pv: dict, lines: list[str]):
+        from PySide6.QtWidgets import QDialogButtonBox
+        super().__init__(parent)
+        self.setWindowTitle("Confirm reset")
+        self.setMinimumWidth(520)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 14)
+        lay.setSpacing(10)
+        head = label("This will permanently remove:", "SectionTitle")
+        lay.addWidget(head)
+        lay.addWidget(label("<br>".join("• " + x for x in lines) + f"<br><br>Period: <b>{pv['period']}</b>", "", wrap=True))
+        lay.addWidget(label("A backup is saved first, so 'Undo last reset' can bring it back.", "Muted", wrap=True))
+        form = QFormLayout()
+        self.pw = QLineEdit()
+        self.pw.setEchoMode(QLineEdit.Password)
+        self.word = QLineEdit()
+        self.word.setPlaceholderText("RESET")
+        form.addRow("Your password", self.pw)
+        form.addRow("Type RESET", self.word)
+        lay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok = bb.button(QDialogButtonBox.Ok)
+        ok.setText("Reset now")
+        ok.setProperty("variant", "danger")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.pw.setFocus()
 
 
 class UserDialog(FormDialog):
@@ -84,6 +117,7 @@ class SettingsPage(Page):
         u = current_user()
         self.admin = u.can("settings")
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setStyleSheet("QTabBar::tab { padding: 8px 11px; margin-right: 2px; }")  # 12 tabs fit
         self.root.addWidget(self.tabs, 1)
         self.tab_index = {}
         if self.admin:
@@ -92,6 +126,8 @@ class SettingsPage(Page):
             self._print_tab()
         if u.can("backup"):
             self._backup_tab()
+        if self.admin and current_user().role == "ADMIN":
+            self._reset_tab()
         if self.admin:
             self._stock_tab()
             self._categories_tab()
@@ -361,6 +397,162 @@ class SettingsPage(Page):
         if path:
             self._restore(path)
 
+    # ------------------------------------------------------------ data reset (owner only)
+    RESET_CHOICES = [
+        ("sales", "Sales & bills", "quick sales, returns, exchanges and their payments – their stock comes back"),
+        ("repairs", "Repair jobs", "with the spare parts used (back to stock) and their payments"),
+        ("purchases", "Purchases", "with the supplier payments for them – their stock goes out again"),
+        ("expenses", "Expenses", ""),
+        ("closings", "Daily closings", "those days become open again"),
+        ("stock", "Stock", "every product's stock set to 0 – products stay"),
+        ("products", "Products", "delete all items – also clears sales, repairs and purchases"),
+        ("customers", "Customers", "only those with no bills or repair jobs left"),
+        ("suppliers", "Suppliers", "only those with no purchases left"),
+    ]
+
+    def _reset_tab(self):
+        c = Card("Reset data", "clear practice data or wrong entries · owner only · a backup is taken first, so it can be undone")
+        grid = QVBoxLayout()
+        grid.setSpacing(6)
+        self.r_boxes = {}
+        for key, title, hint in self.RESET_CHOICES:
+            cb = QCheckBox(title.replace("&", "&&"))
+            cb.toggled.connect(self._reset_rules)
+            self.r_boxes[key] = cb
+            grid.addLayout(hbox(cb, label(hint, "Muted") if hint else None, None))
+        c.add(grid)
+        self.r_full = QCheckBox("FULL RESET – everything, like a new install (shop details, logo, settings, logins and "
+                                "categories stay)")
+        self.r_full.setStyleSheet(f"color: {current().bad}; font-weight: 600;")
+        self.r_full.toggled.connect(self._reset_rules)
+        c.add(self.r_full)
+        self.r_all = QRadioButton("All time")
+        self.r_range = QRadioButton("From")
+        self.r_all.setChecked(True)
+        self.r_from = DateEdit()
+        self.r_to = DateEdit()
+        for w in (self.r_all, self.r_range):
+            w.toggled.connect(self._reset_rules)
+        c.add(hbox(QLabel("<b>Period</b>"), self.r_all, self.r_range, self.r_from, QLabel("to"), self.r_to,
+                   label("(for sales, repairs, purchases, expenses and closings)", "Muted"), None))
+        self.r_preview = label("Tick what to clear and press 'Show what will be removed'.", "Muted", wrap=True)
+        self.r_preview.setTextFormat(Qt.RichText)
+        c.add(hbox(button("Show what will be removed", "", "eye", self.reset_preview),
+                   button("Reset…", "danger", "trash-2", self.reset_run), None))
+        c.add(self.r_preview)
+        u = Card("Undo last reset", "puts back the backup taken just before the last reset")
+        self.r_last = label("", "Muted", wrap=True)
+        u.add(self.r_last)
+        u.add(hbox(button("Undo last reset", "", "rotate-ccw", self.reset_undo), None))
+        u.add(label("Bills, payments or anything else entered after that reset will be lost when you undo it.", "Muted",
+                    wrap=True))
+        self._add("reset", _tab(c, u), "Reset")
+        self._reset_rules()
+        self._reset_last()
+
+    def _reset_rules(self):
+        """Full reset ticks everything; Products ticks what has to go with it. Unticking gives the old choice back."""
+        for _ in range(2):               # twice, so unticking Full also re-evaluates Products
+            full = self.r_full.isChecked()
+            products = self.r_boxes["products"].isChecked()
+            forced = set(reset.MODULES) if full else ({"sales", "repairs", "purchases", "stock"} if products else set())
+            before = getattr(self, "_r_forced", set())
+            saved = getattr(self, "_r_saved", {})
+            for key, cb in self.r_boxes.items():
+                cb.blockSignals(True)
+                if key in forced and key not in before:
+                    saved[key] = cb.isChecked()
+                    cb.setChecked(True)
+                elif key not in forced and key in before:
+                    cb.setChecked(saved.pop(key, False))
+                cb.setEnabled(key not in forced or (key == "products" and not full))
+                cb.blockSignals(False)
+            self._r_forced, self._r_saved = forced, saved
+        full = self.r_full.isChecked()
+        products = self.r_boxes["products"].isChecked()
+        chosen = {k for k, cb in self.r_boxes.items() if cb.isChecked()}
+        dated = bool(chosen & reset.DATED) and not full and not products
+        for w in (self.r_all, self.r_range):
+            w.setEnabled(dated)
+        for w in (self.r_from, self.r_to):
+            w.setEnabled(dated and self.r_range.isChecked())
+
+    def _reset_selection(self):
+        mods = ["all"] if self.r_full.isChecked() else [k for k, cb in self.r_boxes.items() if cb.isChecked()]
+        if self.r_range.isChecked() and self.r_range.isEnabled():
+            return mods, self.r_from.value(), self.r_to.value()
+        return mods, None, None
+
+    def _reset_last(self):
+        info_ = reset.last_reset()
+        if not info_:
+            self.r_last.setText("No reset has been done yet.")
+            return
+        when = info_.get("at", "").replace("T", " ")[:16]
+        what = ", ".join(info_.get("modules") or [])
+        self.r_last.setText(f"Last reset: <b>{when}</b> · {what} · {info_.get('period', '')}<br>"
+                            + "<br>".join(info_.get("summary") or []))
+
+    def _reset_show(self, pv) -> list[str]:
+        p = current()
+        if pv["blocked"]:
+            self.r_preview.setText(f"<span style='color:{p.bad}'><b>Can't reset this way:</b><br>"
+                                   + pv["blocked"].replace("\n", "<br>") + "</span>")
+            return []
+        lines = reset.summary_lines(pv)
+        body = "<br>".join("• " + x for x in lines) or "Nothing to remove."
+        notes = "".join(f"<br><i>{n}</i>" for n in pv.get("notes", []))
+        self.r_preview.setText(f"<b>Will be removed ({pv['period']}):</b><br>{body}{notes}")
+        return lines
+
+    def reset_preview(self):
+        mods, a, b = self._reset_selection()
+        pv = run_safely(self, reset.preview_reset, mods, a, b)
+        if pv:
+            self._reset_show(pv)
+
+    def reset_run(self):
+        mods, a, b = self._reset_selection()
+        pv = run_safely(self, reset.preview_reset, mods, a, b)
+        if not pv:
+            return
+        lines = self._reset_show(pv)
+        if pv["blocked"]:
+            return
+        if not any(pv["counts"].values()):
+            info(self, "Reset", "There is nothing to remove for this choice.")
+            return
+        dlg = ResetConfirmDialog(self, pv, lines)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        st = run_safely(self, reset.run_reset, mods, a, b, password=dlg.pw.text(), confirm=dlg.word.text(), topic="all")
+        if not st:
+            return
+        self._reset_last()
+        self.r_preview.setText("Reset done. A backup was saved first – use 'Undo last reset' if you need it back.")
+        toast("Reset done")
+        info(self, "Reset done", "Removed:\n" + "\n".join("• " + x for x in st["summary"]) +
+             (f"\n\n{st['refreshed_closings']} closed day(s) got their figures updated." if st.get("refreshed_closings") else "")
+             + "\n\nBackup taken before the reset:\n" + st["backup"])
+
+    def reset_undo(self):
+        from PySide6.QtWidgets import QInputDialog
+        info_ = reset.last_reset()
+        if not info_:
+            info(self, "Undo last reset", "There is no reset to undo.")
+            return
+        when = info_.get("at", "").replace("T", " ")[:16]
+        pw, ok = QInputDialog.getText(self, "Undo last reset",
+                                      f"Bring back all data as it was before the reset of {when}?\n"
+                                      "Anything entered after that reset will be lost. The app closes afterwards.\n\n"
+                                      "Enter your password:", QLineEdit.Password)
+        if not ok:
+            return
+        if run_safely(self, reset.undo_last_reset, pw):
+            info(self, "Undone", "The data from before the reset is back. SDJ Mobile Care will now close – please open "
+                                 "it again.")
+            QApplication.instance().quit()
+
     # ------------------------------------------------------------ stock & service
     def _stock_tab(self):
         a = settings.get_all()
@@ -461,7 +653,26 @@ class SettingsPage(Page):
         c.add(self.u_table)
         c.add(hbox(button("Add staff account", "primary", "user-plus", self.add_user),
                    button("Edit / reset password", "", "pencil", lambda: self.edit_user(self.u_table.selected())), None))
-        self._add("users", _tab(c), "Users")
+        a = Card("Owner approval for staff", "staff can still do protected things – when the owner or a manager types their password")
+        self.ap_on = QCheckBox("When staff don't have permission (cancel / edit a bill, adjust stock …), let the owner "
+                               "or a manager approve on the spot")
+        self.ap_on.setChecked(bool(settings.get("owner_approval")))
+        self.ap_disc = QSpinBox()
+        self.ap_disc.setRange(0, 100)
+        self.ap_disc.setSuffix(" %")
+        self.ap_disc.setValue(int(float(settings.get("staff_discount_limit") or 0)))
+        self.ap_disc.setFixedWidth(110)
+        a.add(self.ap_on)
+        a.add(hbox(QLabel("Staff discount limit"), self.ap_disc,
+                   label("of the bill · above this the owner / a manager must approve · 0 = no limit", "Muted"), None))
+        a.add(hbox(button("Save approval settings", "primary", "save", self.save_approval), None))
+        self._add("users", _tab(c, a), "Users")
+
+    def save_approval(self):
+        if run_safely(self, settings.set_many, {"owner_approval": self.ap_on.isChecked(),
+                                                "staff_discount_limit": self.ap_disc.value()},
+                      success="Approval settings saved", topic="settings"):
+            bus().settings_changed.emit()
 
     def add_user(self):
         if UserDialog(self).exec() == QDialog.Accepted:

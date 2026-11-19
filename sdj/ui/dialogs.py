@@ -473,7 +473,7 @@ class SaleDetailDialog(QDialog):
     def __init__(self, parent, sale_id: int):
         super().__init__(parent)
         self.sale_id = sale_id
-        self.setMinimumSize(820, 620)
+        self.setMinimumSize(1000, 620)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 14)
         lay.setSpacing(10)
@@ -502,9 +502,11 @@ class SaleDetailDialog(QDialog):
         bar.addStretch(1)
         self.collect_btn = button("Collect payment", "primary", "hand-coins", self._collect)
         self.return_btn = button("Return / exchange", "", "arrow-left-right", self._return)
+        self.edit_btn = button("Edit bill", "", "pencil", self._edit)
         self.cancel_btn = button("Cancel bill", "danger", "x", self._cancel)
         bar.addWidget(self.collect_btn)
         bar.addWidget(self.return_btn)
+        bar.addWidget(self.edit_btn)
         bar.addWidget(self.cancel_btn)
         bar.addWidget(button("Close", "", None, self.accept))
         lay.addLayout(bar)
@@ -531,7 +533,11 @@ class SaleDetailDialog(QDialog):
         active = d["status"] == "COMPLETED"
         self.collect_btn.setVisible(active and d["balance"] > 0 and u.can("collect_payment"))
         self.return_btn.setVisible(active and u.can("returns"))
-        self.cancel_btn.setVisible(active and u.can("cancel_sale") and not d["returns"])
+        from .widgets import approval_enabled
+        changeable = active and not d["returns"] and d["sale_type"] != "EXCHANGE" and \
+            (u.can("cancel_sale") or approval_enabled())
+        self.cancel_btn.setVisible(changeable)
+        self.edit_btn.setVisible(changeable and (u.can("billing") or u.can("quick_sale")))
 
     def _print(self, fmt):
         from ..output.pdf_docs import invoice_pdf
@@ -554,8 +560,22 @@ class SaleDetailDialog(QDialog):
                                                "Stock will be added back and the payment voided.")
         if reason is None:
             return
-        if run_safely(self, sales.cancel_sale, self.sale_id, reason, success="Bill cancelled", topic="sales"):
+        from .widgets import run_approved
+        if run_approved(self, sales.cancel_sale, self.sale_id, reason, success="Bill cancelled", topic="sales"):
             self.load()
+
+    def _edit(self):
+        from .bus import go
+        from .widgets import ensure_permission
+        problem = sales.edit_problem(self.sale_id)
+        if problem:
+            error(self, problem)
+            return
+        ok = ensure_permission(self, "cancel_sale")
+        if ok is None:
+            return
+        self.accept()
+        go("billing", {"edit_sale_id": self.sale_id, "approver": None if ok is True else ok})
 
     def _return(self):
         from .bus import go

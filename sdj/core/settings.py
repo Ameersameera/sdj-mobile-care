@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     "default_repair_warranty_days": 0,
     # cash
     "default_opening_cash": 0,
+    # staff controls
+    "owner_approval": True,         # staff without a permission can get owner / manager approval on the spot
+    "staff_discount_limit": 0,      # % of the bill; above this staff need approval (0 = no limit)
     # backup
     "auto_backup": True,
     "backup_dir": "",

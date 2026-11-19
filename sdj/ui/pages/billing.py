@@ -1,6 +1,7 @@
 """New Billing (POS): barcode/IMEI scan, multi-item cart, discounts, GST, split / partial / credit payments."""
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
@@ -18,7 +19,7 @@ from ..dialogs import ImeiSelectDialog
 from ..printing import deliver_pdf, print_pdf, show_pdf
 from ..theme import current
 from ..widgets import (Card, CustomerPicker, MoneySpin, Page, ProductPicker, QtySpin, add_shortcut, button, confirm,
-                       error, label, new_ref, run_safely)
+                       error, label, new_ref, run_approved, run_safely)
 
 PRINT_CHOICES = [("Thermal 80 mm", "THERMAL_80"), ("Thermal 58 mm", "THERMAL_58"), ("A4 invoice", "A4"), ("No print", "NONE")]
 
@@ -32,6 +33,18 @@ class BillingPage(Page):
         self._ref = new_ref()
         self._pay_touched = False
         self._calc = None
+        self._edit = None          # {id, invoice_no, approver, allow: {product_id: qty already on the bill}}
+        self.edit_bar = QWidget()
+        self.edit_bar.setObjectName("EditBar")
+        eb = QHBoxLayout(self.edit_bar)
+        eb.setContentsMargins(14, 8, 10, 8)
+        self.edit_lbl = label("", "", wrap=True)
+        eb.addWidget(self.edit_lbl, 1)
+        eb.addWidget(button("Stop editing", "", "x", lambda: self.clear_bill(ask=True)))
+        self.edit_bar.setStyleSheet(f"#EditBar {{ background: {current().warn}22; border: 1px solid {current().warn};"
+                                    " border-radius: 10px; }")
+        self.edit_bar.setVisible(False)
+        self.root.addWidget(self.edit_bar)
         body = QHBoxLayout()
         body.setSpacing(16)
         self.root.addLayout(body, 1)
@@ -171,7 +184,45 @@ class BillingPage(Page):
         self.customer.reload()
 
     def open_with(self, payload):
+        if payload and payload.get("edit_sale_id"):
+            self.start_edit(payload["edit_sale_id"], payload.get("approver"))
         self.picker.setFocus()
+
+    def start_edit(self, sale_id: int, approver=None) -> None:
+        """Load a saved bill of the open day; saving replaces it and keeps the invoice number."""
+        d = sales.get_sale(sale_id)
+        self.clear_bill(ask=False)
+        allow: dict[int, int] = defaultdict(int)
+        for ln in d["lines"]:
+            p = inventory.get_product(ln["product_id"])
+            allow[p["id"]] += ln["quantity"]
+            line = dict(product=p, qty=ln["quantity"], price=D(ln["unit_price"]), disc=D(ln["item_discount"]))
+            if ln.get("imei_record_id"):
+                line.update(imei_id=ln["imei_record_id"], imei=ln["imei"])
+            self.lines.append(line)
+        self._edit = dict(id=sale_id, invoice_no=d["invoice_no"], approver=approver, allow=dict(allow))
+        self.bill_disc.set_d(d["bill_discount"])
+        if not d["customer"]["is_walk_in"]:
+            self.customer.set_customer(dict(id=d["customer_id"], name=d["customer_name"], phone=d["customer_phone"]))
+        self.notes.setText(d.get("notes") or "")
+        paid = defaultdict(Decimal)
+        for p in d["payments"]:
+            if p["status"] == "ACTIVE" and p["direction"] == "IN" and p["mode"] in self.pay:
+                paid[p["mode"]] += D(p["amount"])
+        self._pay_touched = True
+        self.render_lines()
+        for m, sp in self.pay.items():
+            sp.blockSignals(True)
+            sp.set_d(paid.get(m, 0))
+            sp.blockSignals(False)
+        self._update_paid()
+        self.edit_lbl.setText(f"<b>Editing invoice {d['invoice_no']}</b> – change items, prices or payment and save. "
+                              "The invoice number stays the same; the old version is kept as cancelled.")
+        self.edit_bar.setVisible(True)
+
+    def _avail(self, prod: dict) -> int:
+        extra = self._edit["allow"].get(prod["id"], 0) if self._edit else 0
+        return prod["quantity"] + extra
 
     def _stock_in_cart(self, pid: int) -> int:
         return sum(l["qty"] for l in self.lines if l["product"]["id"] == pid)
@@ -194,8 +245,8 @@ class BillingPage(Page):
                 self.lines.append(dict(product=p, qty=1, price=D(p["selling_price"]), disc=Decimal("0"),
                                        imei_id=r["id"], imei=r["label"]))
         else:
-            if self._stock_in_cart(p["id"]) + 1 > p["quantity"]:
-                toast(f"'{p['name']}' – only {p['quantity']} in stock.", "error")
+            if self._stock_in_cart(p["id"]) + 1 > self._avail(p):
+                toast(f"'{p['name']}' – only {self._avail(p)} in stock.", "error")
                 return
             for l in self.lines:
                 if l["product"]["id"] == p["id"] and not l.get("imei_id"):
@@ -216,7 +267,7 @@ class BillingPage(Page):
                           f"{('IMEI ' + l['imei']) if l.get('imei') else (prod['code'] + ' · stock ' + str(prod['quantity']))}</span>")
             name.setContentsMargins(4, 0, 4, 0)
             self.table.setCellWidget(r, 1, name)
-            q = QtySpin(maximum=max(prod["quantity"], 1))
+            q = QtySpin(maximum=max(self._avail(prod), 1))
             q.setValue(l["qty"])
             q.setEnabled(not l.get("imei_id"))
             q.valueChanged.connect(lambda v, i=r: self._set(i, "qty", v))
@@ -332,6 +383,8 @@ class BillingPage(Page):
         self.lines = []
         self._ref = new_ref()
         self._pay_touched = False
+        self._edit = None
+        self.edit_bar.setVisible(False)
         self.bill_disc.setValue(0)
         self.tendered.setValue(0)
         self.notes.clear()
@@ -349,16 +402,26 @@ class BillingPage(Page):
         payments = {m: sp.value_d() for m, sp in self.pay.items() if sp.value_d() > 0}
         self.save_btn.setEnabled(False)
         self.print_btn.setEnabled(False)
+        common = dict(customer_id=self.customer.customer_id(), bill_discount=self.bill_disc.value_d(),
+                      payments=payments, notes=self.notes.text(), client_ref=self._ref, topic="sales")
+        editing = self._edit
         try:
-            res = run_safely(self, sales.create_sale, items, customer_id=self.customer.customer_id(),
-                             bill_discount=self.bill_disc.value_d(), payments=payments, notes=self.notes.text(),
-                             client_ref=self._ref, topic="sales")
+            if editing:
+                from ...core.auth import approved
+                if editing.get("approver") is not None:
+                    with approved(editing["approver"], {"cancel_sale"}):
+                        res = run_approved(self, sales.amend_sale, editing["id"], items, **common)
+                else:
+                    res = run_approved(self, sales.amend_sale, editing["id"], items, **common)
+            else:
+                res = run_approved(self, sales.create_sale, items, **common)
         finally:
             self.save_btn.setEnabled(True)
             self.print_btn.setEnabled(True)
         if not res:
             return
-        msg = f"Invoice {res['invoice_no']} saved · {inr(res['grand_total'])}"
+        msg = (f"Invoice {res['invoice_no']} updated · {inr(res['grand_total'])}" if editing else
+               f"Invoice {res['invoice_no']} saved · {inr(res['grand_total'])}")
         if res["balance"] > 0:
             msg += f" · {inr(res['balance'])} on credit"
         toast(msg)
