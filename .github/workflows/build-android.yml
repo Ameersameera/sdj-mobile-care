@@ -56,6 +56,15 @@ jobs:
             android/app/build/reports/tests/
           if-no-files-found: ignore
 
+      - name: Keep the screen pictures for review (branch ci-phone-shots, not on main)
+        if: always() && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
+        run: |
+          [ -d android/build/test-out/shots ] || exit 0
+          cd android/build/test-out/shots
+          git init -q && git checkout -q -b ci-phone-shots
+          git add ./*.png && git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "phone screens $GITHUB_SHA"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-phone-shots
+
       - name: Add the APK to GitHub Releases
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         env:

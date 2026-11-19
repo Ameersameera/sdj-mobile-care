@@ -134,6 +134,26 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 * **Owner approval**: when staff lack a permission (cancel / edit a bill, adjust stock, a discount above the staff limit),
   the owner or a manager can approve on the spot with their own password. The audit log records who approved.
 
+### Phone app and Phone link (Settings → Phone link, owner only) – no cloud
+
+The Android app (`SDJMobileCare-Phone-<version>.apk` on the Releases page) uses the same shop data as the PC.
+
+* **Link**: on the PC open *Settings → Phone link*, type your password, choose the account the phone signs in as and
+  tap **Create one-time code** (valid 10 minutes, works once). In the phone app tap **Scan QR from PC** or type the
+  code, then sign in with that account's password. The phone gets that account's permissions.
+* **Sync**: over the shop Wi-Fi only (TCP 47810 / UDP 47811 on the PC; the installer adds the firewall rule). While the
+  phone app is open it syncs every few seconds; new entries go at once. No internet, cloud or mobile data is used.
+* **Offline**: the phone keeps a full copy. Entries made away from the Wi-Fi or while the PC is off are kept on the phone
+  and merged when it is back on the Wi-Fi. Each entry is saved exactly once (resending is harmless).
+* **No clashes**: phone bills / jobs use their own number series (`SDJ-P1/26-27/00001`, `JOB-P1-0001`). Stock is
+  counted from every sale, so sales on both sides add up. The owner gets a **Sync alert** for: last piece sold on both
+  sides, the same bill changed on both (choose phone or PC version), entries for a day already closed
+  (**Update closing** recalculates it), a payment larger than the dues left.
+* **Security**: pairing proves the code without sending it (PBKDF2 + AES-GCM); each phone then has its own 256-bit key
+  and every request / answer is encrypted. **Remove phone** stops a lost phone at once. A safety backup is taken before
+  phone entries are merged (at most once an hour).
+* The PC is the main copy: products, purchases, returns, stock adjustment, closing, reports and settings stay on the PC.
+
 ### Resetting data (Settings → Reset, owner only)
 * Clear practice data or wrong entries: **Sales & bills**, **Repair jobs**, **Purchases**, **Expenses**, **Daily closings**,
   **Stock** (set to 0), **Products**, **Customers** / **Suppliers** with nothing left – for *All time* or *From – To* dates –
@@ -198,9 +218,15 @@ pip install -r requirements.txt
 set QT_QPA_PLATFORM=offscreen
 python -m pytest -v
 ```
-76 automated tests cover the complete 20-step workflow from the specification, returns, exchanges, cancelled bills,
+Python: 87 automated tests cover the complete 20-step workflow from the specification, returns, exchanges, cancelled bills,
 insufficient stock, partial payments & credit, duplicate prevention, GST, IMEI & warranty, closed-day locking,
-permissions, owner approval, bill editing, data reset & undo, backup / restore and database recovery, plus GUI tests that drive the real screens.
+permissions, owner approval, bill editing, data reset & undo, backup / restore and database recovery, phone pairing and
+sync (entries saved once, last piece sold twice, closed day, bill changed on both, removed phone, the real network
+service), plus GUI tests that drive the real screens.
+
+Android (`android/`, run by GitHub Actions): the phone's bill maths is checked against 400 bills computed by the PC code,
+encryption both ways, offline entries, and every screen is drawn; then the PC code replays the phone's sync request and
+must accept every entry with the same totals.
 See **[TEST_RESULTS.md](TEST_RESULTS.md)** for the latest run.
 
 ---
@@ -215,7 +241,8 @@ SDJ_Mobile_Care/
 ├── build_windows.bat           one-click Windows build (tests + exe + installer)
 ├── run_app.bat / run_demo.bat
 ├── installer/                  Inno Setup script + exe version info
-├── .github/workflows/          automatic Windows build on GitHub
+├── .github/workflows/          automatic Windows + Android builds on GitHub
+├── android/                    phone app (Kotlin / Jetpack Compose), its tests and fixtures
 ├── assets/                     SDJ logo, app icon, Lucide icons, DejaVu fonts (₹ support)
 ├── sample_data/sdj_sample.db   demo / testing database (fictional data)
 ├── scripts/
@@ -227,7 +254,8 @@ SDJ_Mobile_Care/
 │   ├── db/                     SQLAlchemy models, exact money types, schema, triggers, auto-upgrade
 │   ├── core/                   business logic: inventory, sales, returns, purchases, repairs, expenses,
 │   │                           customers & suppliers, IMEI/warranty, business day, closing, reports,
-│   │                           backup, users & roles, audit, numbering, Excel import
+│   │                           backup, users & roles, audit, numbering, Excel import,
+│   │                           phonesync / syncserver (phone link)
 │   ├── output/                 ReportLab invoices / receipts / job cards / reports, Excel & CSV
 │   └── ui/                     PySide6 interface: theme, widgets, charts, printing, 20 pages
 ├── tests/                      pytest suite (core + GUI)
