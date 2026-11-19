@@ -59,6 +59,7 @@ jobs:
           path: dist/installer/*.exe
 
       - name: Publish to GitHub Releases (creates v<version>, or refreshes its files)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
