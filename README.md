@@ -168,8 +168,9 @@ All money is stored exactly (integer paise) – no rounding drift. All figures b
 2. GitHub Actions runs the tests on Windows and builds the app automatically.
 3. Open *Actions → Build Windows app → latest run* and download **SDJMobileCare-Windows-installer** (setup .exe) or
    **SDJMobileCare-Windows-app** (portable folder). These run downloads expire after 90 days.
-4. To publish a permanent download on the **Releases** page, push a version tag – e.g. `git tag v1.0.1 && git push origin v1.0.1`.
-   The same workflow builds the app and attaches the installer and a portable zip to a new release.
+4. Every successful build also publishes the installer and a portable zip on the **Releases** page as
+   `v<version>` (permanent download). For a new version, change `MyAppVersion` in `installer/sdj_mobile_care.iss`
+   and `APP_VERSION` in `sdj/__init__.py`; a build of the same version just refreshes the files.
 
 **Portable mode:** put an empty file named `portable.flag` next to `SDJMobileCare.exe` and all data is kept beside the
 app (e.g. on a USB drive) instead of in the user profile.
