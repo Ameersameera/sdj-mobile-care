@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QVBoxLayout, QWidget)
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import APP_SHORT_TITLE, APP_VERSION, config
 from ..core import auth, settings
@@ -115,22 +115,78 @@ class LoginDialog(QDialog):
         self.accept()
 
 
+class _Choice(QPushButton):
+    """A big button with a title and a line of explanation (first screen of a new PC)."""
+
+    def __init__(self, title: str, text: str, slot, primary: bool = False):
+        super().__init__()
+        self.setObjectName("StartChoice")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAccessibleName(title)
+        p = current()
+        self.setStyleSheet(f"QPushButton#StartChoice {{ border-radius: 10px; background: {p.card}; min-height: 66px; "
+                           f"padding: 0px; "
+                           f"border: {'2px' if primary else '1px'} solid {p.accent if primary else p.border}; }} "
+                           f"QPushButton#StartChoice:hover, QPushButton#StartChoice:focus {{ border: 2px solid {p.accent}; }}")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 10, 16, 10)
+        lay.setSpacing(2)
+        t = QLabel(title)
+        t.setStyleSheet(f"font-size: 11.5pt; font-weight: 700; color: {p.text}; background: transparent; border: none;")
+        d = QLabel(text)
+        d.setWordWrap(True)
+        d.setStyleSheet(f"font-size: 9.5pt; color: {p.text2}; background: transparent; border: none;")
+        for w in (t, d):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents)
+            lay.addWidget(w)
+        self.setMinimumHeight(78)
+        self.clicked.connect(slot)
+
+
 class SetupWizard(QDialog):
-    """First run: shop details (nothing invented – leave blank if unknown) and the admin account."""
+    """First run: restore the shop from a phone / backup file, or start fresh with shop details (nothing invented –
+    leave blank if unknown) and the admin account."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Welcome – {APP_SHORT_TITLE}")
         self.setFixedSize(900, 620)
         self.user = None
+        self.restored = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(_brand_panel(300))
+        self.stack = QStackedWidget()
+        lay.addWidget(self.stack, 1)
+        start = QWidget()
+        sl = QVBoxLayout(start)
+        sl.setContentsMargins(36, 36, 36, 26)
+        sl.setSpacing(12)
+        sl.addWidget(label("Welcome to SDJ Mobile Care", "PageTitle"))
+        sl.addWidget(label("Is this a new PC for an existing shop? Bring the shop's data back first. Otherwise start "
+                           "fresh.", "Muted", wrap=True))
+        sl.addSpacing(6)
+        sl.addWidget(_Choice("Restore from phone", "The phone app keeps a backup after every daily closing – send it "
+                             "here over Wi-Fi.", self.restore_phone, primary=True))
+        sl.addWidget(_Choice("Restore from a backup file", "From a pen drive, or a backup downloaded from Google Drive "
+                             "(.sdjb file).", self.restore_file))
+        sl.addWidget(_Choice("Start fresh", "A new shop: enter the shop details and create the owner login.",
+                             lambda: self.stack.setCurrentIndex(1)))
+        sl.addStretch(1)
+        sl.addWidget(label("No backup anywhere? Choose 'Restore from phone' – the phone can also rebuild the shop from "
+                           "its own copy (products, stock, IMEIs, customers with dues, open repair jobs).", "Muted",
+                           wrap=True))
+        self.stack.addWidget(start)
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(36, 28, 36, 22)
         rl.setSpacing(8)
+        back = QPushButton("← Back")
+        back.setFlat(True)
+        back.setCursor(Qt.PointingHandCursor)
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        rl.addWidget(back, 0, Qt.AlignLeft)
         rl.addWidget(label("Let's set up your shop", "PageTitle"))
         rl.addWidget(label("You can change all of this later in Settings. Leave a field blank if it does not apply.",
                            "Muted", wrap=True))
@@ -170,7 +226,23 @@ class SetupWizard(QDialog):
         btn = button("Start using SDJ Mobile Care", "primary", None, self._save)
         btn.setMinimumHeight(40)
         rl.addWidget(btn)
-        lay.addWidget(right, 1)
+        self.stack.addWidget(right)
+
+    def restore_phone(self):
+        from .offsite_ui import RestoreFromPhoneDialog
+        dlg = RestoreFromPhoneDialog(self)
+        dlg.exec()
+        if dlg.restored:
+            self.restored = True
+            self.accept()
+
+    def restore_file(self):
+        from .offsite_ui import restore_from_file
+        if restore_from_file(self):
+            from .widgets import info
+            info(self, "Restored", "The shop's data is back. Sign in with your usual username and password.")
+            self.restored = True
+            self.accept()
 
     def _save(self):
         if self.pw1.text() != self.pw2.text():

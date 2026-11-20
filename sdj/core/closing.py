@@ -113,6 +113,8 @@ def close_day(d: date, actual_cash, opening_cash=None, notes: str = "", make_pdf
             result["backup"] = str(backup_now("closing"))
         except Exception:
             log.exception("backup after closing failed")
+        from .offsite import after_closing          # encrypted copy for the phones and the 2nd backup folder
+        result["offsite"] = after_closing(d, result.get("pdf_path"))
     return result
 
 

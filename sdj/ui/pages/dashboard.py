@@ -34,6 +34,11 @@ class DashboardPage(Page):
         col.addWidget(self.greet)
         col.addWidget(self.when)
         top.addLayout(col, 1)
+        self.backup_btn = button("", "ghost", "hard-drive", lambda: go("settings", {"tab": "backup"}))
+        self.backup_btn.setToolTip("Where the latest backup is kept (phone / 2nd folder). Click for Settings → Backup.")
+        self.show_backup = u.can("backup")
+        self.backup_btn.setVisible(self.show_backup)
+        top.addWidget(self.backup_btn)
         lay.addLayout(top)
         top = QHBoxLayout()
         top.setSpacing(8)
@@ -170,6 +175,17 @@ class DashboardPage(Page):
         self.sk["out"].set(qty(st["out_of_stock"]), "click to view", "bad" if st["out_of_stock"] else "")
         self.sk["sold"].set(qty(c.get("qty_sold", 0)))
         self.recent.set_rows(d["recent"])
+        if self.show_backup:
+            try:
+                from ..offsite_ui import backup_line
+                text, late = backup_line()
+                self.backup_btn.setText(("⚠ " if late else "") + text)
+                self.backup_btn.setProperty("variant", "danger" if late else "ghost")
+                self.backup_btn.style().unpolish(self.backup_btn)
+                self.backup_btn.style().polish(self.backup_btn)
+            except Exception:  # the dashboard must always open
+                import logging
+                logging.getLogger(__name__).exception("backup line failed")
         self._charts = reports.chart_data()
         self._draw_charts()
 

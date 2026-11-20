@@ -9,7 +9,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
@@ -94,7 +96,8 @@ val MODE_LABELS = mapOf("CASH" to "Cash", "UPI" to "UPI", "CARD" to "Card", "OTH
  * to the PC whenever the PC can be reached on the shop Wi-Fi.
  */
 class Repo(private val store: Store, private val net: Net, private val io: CoroutineDispatcher = Dispatchers.IO,
-           private val appVersion: String = "1") {
+           private val appVersion: String = "1",
+           val backups: Backups = Backups(store.dir, FileSink(File(store.dir, "backup-files")), null)) {
     private val mutex = Mutex()
     private val syncMutex = Mutex()
     private val _state = MutableStateFlow(UiState())
@@ -122,6 +125,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     // ================================================================ loading
     suspend fun load() = mutex.withLock {
         withContext(io) { DATASETS.forEach { parse(it, store.data(it)) } }
+        backups.refresh()
         if (cfg.bool("stay")) signedIn = users.firstOrNull { it.id == cfg.lng("signed_user") && it.id == shop?.userId }
         sync = sync.copy(lastOk = cfg.str("last_sync"), host = cfg.str("last_host"))
         publish(ready = true)
@@ -773,6 +777,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             val needFull = full || shop == null || users.isEmpty()
             val req = JSONObject().put("seq", seq).put("ops", wire).put("full", needFull).put("app", appVersion)
                 .put("token", if (needFull) JSONObject.NULL else cfg.str("token")).put("hashes", cfg.optJSONObject("hashes") ?: JSONObject())
+                .put("acks", JSONArray(backups.recentIds()))
             sync = sync.copy(running = true)
             publish()
             Crypto.seal(key, req, device.toByteArray()).put("d", device) to ops.map { it.str("id") }.toSet()
@@ -780,6 +785,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         return try {
             val ans = withContext(io) { Crypto.unseal(key, postToPc(env), device.toByteArray()) }
             mutex.withLock { withContext(io) { applyAnswer(ans, sentIds) } }
+            fetchBackups(ans.optJSONArray("backups"), device, key)
             true
         } catch (e: PcError) {
             mutex.withLock {
@@ -845,17 +851,26 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         for (i in 0 until results.length()) results.getJSONObject(i).let { byId[it.str("id")] = it }
         val a = store.ops()
         val keep = JSONArray()
+        val sent = store.sent()
+        val nowIso = LocalDateTime.now().withNano(0).toString()
         for (i in 0 until a.length()) {
             val op = a.getJSONObject(i)
             val r = byId[op.str("id")]
             if (r == null || op.str("id") !in sentIds) { keep.put(op); continue }
             when (r.str("st")) {
-                "DONE" -> Unit
+                "DONE" -> sent.put(op.put("_sent", nowIso))
                 "CONFLICT" -> notices.add(0, "${info(op).title}: changed on the PC too – the owner will decide on the PC (Sync alerts).")
                 else -> keep.put(op.put("_st", "FAILED").put("_msg", r.str("msg")))
             }
         }
         store.saveOps(keep)
+        store.saveSent(recentSent(sent))
+        val epoch = ans.str("epoch")
+        if (epoch.isNotEmpty()) {
+            val old = cfg.str("epoch")
+            if (old.isNotEmpty() && old != epoch) requeueSent()
+            cfg.put("epoch", epoch)
+        }
         while (notices.size > 20) notices.removeAt(notices.size - 1)
         val now = LocalDateTime.now().withNano(0).toString()
         cfg.put("last_sync", now)
@@ -863,6 +878,189 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         if (signedIn != null) signedIn = users.firstOrNull { it.id == signedIn?.id && it.id == shop?.userId }
         sync = SyncInfo(running = false, lastOk = now, error = "", host = cfg.str("last_host"))
         publish()
+    }
+
+    private fun recentSent(a: JSONArray): JSONArray {
+        val since = LocalDateTime.now().minusDays(10).toString()
+        val all = (0 until a.length()).map { a.getJSONObject(it) }.filter { it.str("_sent") >= since }
+        return JSONArray().apply { all.takeLast(1500).forEach { put(it) } }
+    }
+
+    /** The PC's data was restored from a backup: entries it had already saved may be missing there now. They are sent
+     *  again – the PC saves each entry only once, so nothing is doubled. */
+    private fun requeueSent() {
+        val sent = recentSent(store.sent())
+        val ops = store.ops()
+        val have = HashSet<String>()
+        for (i in 0 until ops.length()) have += ops.getJSONObject(i).str("id")
+        val again = JSONArray()
+        var n = 0
+        for (i in 0 until sent.length()) {
+            val op = sent.getJSONObject(i)
+            if (op.str("id") in have) continue
+            op.remove("_sent")
+            op.remove("_st")
+            op.remove("_msg")
+            again.put(op)
+            n++
+        }
+        for (i in 0 until ops.length()) again.put(ops.getJSONObject(i))
+        store.saveOps(again)
+        store.saveSent(JSONArray())
+        if (n > 0) notices.add(0, "The PC's data was restored from a backup – $n entr${if (n == 1) "y" else "ies"} from this " +
+            "phone are being sent again (the PC saves each one only once).")
+    }
+
+    // ================================================================ backups
+    /** Downloads the backups / closing reports the PC offers and keeps them in Downloads → SDJ Backups. */
+    private suspend fun fetchBackups(list: JSONArray?, device: String, key: ByteArray) {
+        if (list == null || list.length() == 0) {
+            withContext(io) { backups.copyToDrive(false) }             // a Google Drive copy waiting for Wi-Fi
+            return
+        }
+        if (!backups.sink.ready()) {
+            backups.setError("Allow storage access on the Backups screen, so the PC's backups can be saved in Downloads.")
+            return
+        }
+        val work = File(store.dir, "dl").apply { mkdirs() }
+        for (i in 0 until list.length()) {
+            val meta = list.optJSONObject(i) ?: continue
+            val id = meta.lng("id")
+            if (id <= 0 || backups.has(id)) continue
+            val tmp = File(work, "backup.part")
+            try {
+                val seq = mutex.withLock {
+                    val s = cfg.optLong("seq", 0) + 1
+                    cfg.put("seq", s)
+                    store.saveConfig()
+                    s
+                }
+                val env = Crypto.seal(key, JSONObject().put("seq", seq).put("id", id).put("app", appVersion),
+                    "$device|backup".toByteArray()).put("d", device)
+                val sha = withContext(io) { downloadFromPc(env, tmp) }
+                if (sha != meta.str("sha")) throw IOException("the file did not arrive complete")
+                withContext(io) { backups.saveDownloaded(meta, tmp) }
+            } catch (e: PcError) {
+                if (e.code == "replay") mutex.withLock { cfg.put("seq", cfg.optLong("seq", 0) + 1000); store.saveConfig() }
+                backups.setError(e.message ?: "The PC did not send the backup.")
+                break
+            } catch (e: Exception) {
+                backups.setError("Backup not saved yet (${e.message}) – it is tried again at the next sync.")
+                break
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
+
+    private fun downloadFromPc(env: JSONObject, dest: File): String {
+        val port = cfg.optInt("port", Net.PORT)
+        val hosts = (listOf(cfg.str("last_host")) + cfg.arr("hosts").strings()).filter { it.isNotBlank() }.distinct()
+        var last: IOException? = null
+        for (h in hosts) {
+            try {
+                return net.download(h, port, "/sdj/backup", env, dest)
+            } catch (e: IOException) {
+                last = e
+            }
+        }
+        throw last ?: IOException("PC not reachable")
+    }
+
+    /** What the PC's "Restore from phone" QR says: where the PC is and the restore code. */
+    data class RestoreQr(val hosts: List<String>, val port: Int, val code: String, val pcId: String, val name: String)
+
+    fun parseRestoreQr(text: String): RestoreQr? {
+        if (!text.startsWith("SDJRESTORE:")) return null
+        val kv = text.substringAfter(";").split(";").mapNotNull { p -> p.split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        val code = kv["c"] ?: return null
+        return RestoreQr(kv["h"].orEmpty().split(",").filter { it.isNotBlank() }, kv["p"]?.toIntOrNull() ?: Net.PORT, code,
+            kv["id"].orEmpty(), kv["n"].orEmpty())
+    }
+
+    /** Sends a backup to a (new) PC that shows "Restore from phone". The PC then asks for the owner's password. */
+    suspend fun sendToPc(item: BackupItem, qr: RestoreQr, phoneName: String) {
+        if (Crypto.normaliseCode(qr.code).length < 10) throw UserError("Scan the QR shown on the PC (Restore from phone).")
+        if (qr.hosts.isEmpty()) throw UserError("The code has no PC address. Type the PC's address.")
+        val (size, sha) = withContext(io) {
+            val ins = backups.sink.open(item.uri) ?: throw UserError("The backup file is missing – it may have been deleted from Downloads.")
+            Backups.sha256(ins)
+        }
+        var lastErr = "Could not reach the PC."
+        for (host in qr.hosts) {
+            try {
+                val pcId = qr.pcId.ifBlank { withContext(io) { net.hello(host, qr.port) }.str("pc") }
+                val key = withContext(Dispatchers.Default) { Crypto.pairKey(qr.code, pcId) }
+                val hello = uuid()
+                val meta = JSONObject().put("name", item.name).put("size", size).put("sha", sha).put("phone", phoneName)
+                    .put("hello", hello)
+                val auth = Crypto.seal(key, meta, "restore".toByteArray()).put("pc", pcId)
+                val ans = withContext(io) {
+                    net.upload(host, qr.port, "/sdj/restore", auth.toString(), size,
+                        source = { backups.sink.open(item.uri) ?: throw IOException("The backup file is missing.") })
+                }
+                val r = Crypto.unseal(key, ans, "restore".toByteArray())
+                if (!r.bool("ok") || r.str("hello") != hello) throw UserError("The PC's answer did not match. Try again.")
+                return
+            } catch (e: PcError) {
+                throw UserError(e.message ?: "The PC refused the backup.")
+            } catch (e: CryptoException) {
+                throw UserError("The restore code is wrong or has expired. Make a new code on the PC.")
+            } catch (e: IOException) {
+                lastErr = reachError(host, e)
+            }
+        }
+        throw UserError(lastErr)
+    }
+
+    /** Emergency (no backup anywhere): sends this phone's copy of the shop to a new PC, which rebuilds products, stock,
+     *  IMEIs, customers with dues and open repair jobs from it. Owner only. */
+    suspend fun rebuildPc(qr: RestoreQr, phoneName: String): JSONObject {
+        if (!linked || shop == null || users.isEmpty())
+            throw UserError("This phone has no shop copy yet – it must have synced with the old PC at least once.")
+        if (signedIn?.role != "ADMIN") throw UserError("Only the owner can rebuild a PC from this phone.")
+        if (Crypto.normaliseCode(qr.code).length < 10) throw UserError("Scan the QR shown on the PC (Restore from phone).")
+        if (qr.hosts.isEmpty()) throw UserError("The code has no PC address. Type the PC's address.")
+        val hello = uuid()
+        val payload = mutex.withLock {
+            withContext(io) {
+                val data = JSONObject()
+                for (k in listOf("shop", "users", "categories", "products", "imeis", "customers", "sales", "jobs", "expenses")) {
+                    val text = store.data(k) ?: continue
+                    data.put(k, if (text.trimStart().startsWith("[")) JSONArray(text) else JSONObject(text))
+                }
+                val device = JSONObject().put("uid", cfg.str("device")).put("key", cfg.str("key")).put("no", cfg.int("no"))
+                    .put("name", phoneName).put("user_id", cfg.obj("user").lng("id"))
+                JSONObject().put("data", data).put("device", device).put("epoch", cfg.str("epoch"))
+                    .put("made", LocalDateTime.now().withNano(0).toString()).put("last_sync", cfg.str("last_sync"))
+                    .put("hello", hello)
+            }
+        }
+        var lastErr = "Could not reach the PC."
+        for (host in qr.hosts) {
+            try {
+                val pcId = qr.pcId.ifBlank { withContext(io) { net.hello(host, qr.port) }.str("pc") }
+                val key = withContext(Dispatchers.Default) { Crypto.pairKey(qr.code, pcId) }
+                val env = Crypto.seal(key, payload, "rebuild".toByteArray()).put("pc", pcId)
+                val ans = Crypto.unseal(key, withContext(io) { net.post(host, qr.port, "/sdj/rebuild", env, 180_000) },
+                    "rebuild".toByteArray())
+                if (!ans.bool("ok") || ans.str("hello") != hello) throw UserError("The PC's answer did not match. Try again.")
+                return ans.obj("summary")
+            } catch (e: PcError) {
+                throw UserError(e.message ?: "The PC refused the shop copy.")
+            } catch (e: CryptoException) {
+                throw UserError("The restore code is wrong or has expired. Make a new code on the PC.")
+            } catch (e: IOException) {
+                lastErr = reachError(host, e)
+            }
+        }
+        throw UserError(lastErr)
+    }
+
+    /** A backup file picked by hand (Google Drive download, file manager) is added to SDJ Backups. */
+    suspend fun importBackup(name: String, open: () -> InputStream?): BackupItem = withContext(io) {
+        val ins = open() ?: throw UserError("Could not open that file.")
+        backups.importFile(name, ins, File(store.dir, "dl").apply { mkdirs() })
     }
 
     companion object {

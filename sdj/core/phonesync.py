@@ -324,7 +324,8 @@ def list_devices(include_removed: bool = False) -> list[dict]:
                             user_name=(u.full_name or u.username) if u else "?", status=d.status,
                             linked_at=d.linked_at, last_seen_at=mem.get("at") or d.last_seen_at,
                             last_ip=mem.get("ip") or d.last_ip,
-                            app_version=d.app_version, alerts=alerts))
+                            app_version=d.app_version, alerts=alerts,
+                            keeps_backups=bool(d.backups) if d.backups is not None else bool(u and u.role == "ADMIN")))
         return out
 
 
@@ -1024,6 +1025,7 @@ def handle_sync(env: dict, ip: str = "") -> dict:
     aad = dev.device_uid.encode()
     req = unseal(key, env, aad)
     ops = list(req.get("ops") or [])[:MAX_OPS]
+    acks = list(req.get("acks") or [])[:50]
     with _sync_lock:
         user = _note_request(dev, int(req.get("seq") or 0), ip, str(req.get("app") or ""), bool(ops))
         results = []
@@ -1032,8 +1034,20 @@ def handle_sync(env: dict, ip: str = "") -> dict:
             batch = _Batch(dev)
             for op in ops:
                 results.append(apply_op(dev, user, op, batch))
+        backups = []
+        try:
+            from . import offsite
+            with session_scope() as s:
+                if acks:
+                    offsite.mark_delivered(s, dev.id, acks)       # backups / reports the phone has saved
+                backups = offsite.items_for_device(s, dev, user.role)
+            epoch = offsite.data_epoch()
+        except Exception:  # backups must never stop entries from syncing
+            log.exception("phone backup list failed")
+            epoch = settings.get("data_epoch") or ""
         token = data_token()
-        answer = dict(seq=int(req.get("seq") or 0), results=results, token=token, time=_now().isoformat())
+        answer = dict(seq=int(req.get("seq") or 0), results=results, token=token, time=_now().isoformat(),
+                      backups=backups, epoch=epoch)
         if req.get("token") != token or req.get("full"):
             built = build_data(dev, token)
             have = req.get("hashes") or {}
@@ -1064,11 +1078,154 @@ def _maybe_backup() -> None:
 
 def hello() -> dict:
     return dict(sdj=PROTOCOL, pc=pc_identity(), name=settings.get("shop_name") or "SDJ Mobile Care",
-                port=PORT, version=APP_VERSION)
+                port=PORT, version=APP_VERSION, restore=restore_code_info() is not None)
+
+
+# ================================================================ backups to phones, restore to a (new) PC
+RESTORE_MINUTES = 30
+MAX_RESTORE_BYTES = 2 * 1024 ** 3
+_restore: dict = {}            # the waiting restore code (memory only)
+
+
+def handle_backup(env: dict, ip: str = "") -> dict:
+    """A linked phone downloads one backup / closing report. Returns the file to stream (already encrypted)."""
+    from . import offsite
+    dev, key = _device_for(env)
+    req = unseal(key, env, dev.device_uid.encode() + b"|backup")
+    with _sync_lock:
+        user = _note_request(dev, int(req.get("seq") or 0), ip, str(req.get("app") or ""), False)
+    with session_scope() as s:
+        try:
+            item = offsite.item_for_device(s, dev, user.role, int(req.get("id") or 0))
+        except NotFoundError as exc:
+            raise SyncError(str(exc), "gone", 404) from exc
+        except BusinessError as exc:
+            raise SyncError(str(exc), "no_backups", 403) from exc
+    return item
+
+
+def new_restore_code() -> dict:
+    """A code (and QR) the phone uses to send a backup – or its shop copy – to this PC. Valid 30 minutes."""
+    from .auth import user_count
+    if user_count() > 0:
+        require("settings")
+    code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
+    with _codes_lock:
+        _restore.clear()
+        _restore.update(code=code, expires=_now() + timedelta(minutes=RESTORE_MINUTES), failures=0)
+    _emit("restore_code")
+    return restore_code_info()
+
+
+def restore_code_info() -> dict | None:
+    with _codes_lock:
+        if not _restore:
+            return None
+        if _restore["expires"] <= _now():
+            _restore.clear()
+            return None
+        code, expires = _restore["code"], _restore["expires"]
+    ips = local_ips()
+    name = (settings.get("shop_name") or "SDJ").replace(";", " ")
+    qr = f"SDJRESTORE:{PROTOCOL};h={','.join(ips)};p={PORT};c={code};id={pc_identity()};n={name}"
+    return dict(code=code, display=f"{code[:5]}-{code[5:]}", expires=expires, ips=ips, port=PORT, qr=qr)
+
+
+def cancel_restore_code() -> None:
+    with _codes_lock:
+        _restore.clear()
+    _emit("restore_code")
+
+
+def _restore_open(env: dict, aad: bytes):
+    with _codes_lock:
+        live = dict(_restore) if _restore and _restore["expires"] > _now() else None
+    if live is None:
+        raise SyncError("No restore is waiting on this PC. On the PC choose 'Restore from phone' and scan the new QR.",
+                        "no_restore", 403)
+    pc_id = pc_identity()
+    if env.get("pc") and env["pc"] != pc_id:
+        raise SyncError("This code belongs to another computer.", "wrong_pc", 403)
+    key = pair_key(live["code"], pc_id)
+    try:
+        return key, unseal(key, env, aad)
+    except SyncError:
+        with _codes_lock:
+            if _restore:
+                _restore["failures"] = _restore.get("failures", 0) + 1
+                if _restore["failures"] >= 8:
+                    _restore.clear()
+        raise SyncError("The restore code is wrong or has expired. Scan the QR on the PC again.", "bad_code", 403)
+
+
+def _clean_name(name: str) -> str:
+    keep = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (name or ""))[:120].strip("._")
+    return keep or f"backup_{_now():%Y%m%d_%H%M%S}.sdjb"
+
+
+def handle_restore_upload(auth: str, body, length: int, ip: str = "") -> dict:
+    """A phone sends a backup file to this PC (raw body; the X-SDJ-Auth header proves it knows the restore code)."""
+    from . import offsite
+    try:
+        env = json.loads(auth or "{}")
+    except ValueError as exc:
+        raise SyncError("Bad restore request.", "bad_request", 400) from exc
+    key, meta = _restore_open(env, b"restore")
+    size = int(meta.get("size") or 0)
+    if size <= 0 or size != length or size > MAX_RESTORE_BYTES:
+        raise SyncError("The file size does not match. Try again.", "size", 400)
+    name = _clean_name(str(meta.get("name") or ""))
+    dest = offsite.received_dir() / name
+    tmp = dest.with_name(dest.name + ".part")
+    h = hashlib.sha256()
+    left = length
+    with open(tmp, "wb") as f:
+        while left > 0:
+            chunk = body.read(min(1 << 20, left))
+            if not chunk:
+                break
+            f.write(chunk)
+            h.update(chunk)
+            left -= len(chunk)
+    if left or h.hexdigest() != str(meta.get("sha") or ""):
+        tmp.unlink(missing_ok=True)
+        raise SyncError("The file did not arrive complete. Try again on the shop Wi-Fi.", "incomplete", 400)
+    os.replace(tmp, dest)
+    try:
+        info = offsite.describe_file(dest)
+    except BusinessError as exc:
+        dest.unlink(missing_ok=True)
+        raise SyncError(str(exc), "not_backup", 400) from exc
+    info = {k: v for k, v in info.items()}
+    _emit("restore_file", path=str(dest), info=info, phone=str(meta.get("phone") or ""), ip=ip)
+    with session_scope() as s:
+        audit(s, "RESTORE_FILE_RECEIVED", "offsite", name, {"size": size, "phone": meta.get("phone"), "ip": ip})
+    return seal(key, dict(ok=True, name=name, hello=meta.get("hello")), b"restore")
+
+
+def handle_rebuild(env: dict, ip: str = "") -> dict:
+    """Emergency: a phone sends its copy of the shop so a new PC can be rebuilt when there is no backup."""
+    from . import offsite
+    from .auth import user_count
+    key, req = _restore_open(env, b"rebuild")
+    if user_count() > 0:
+        raise SyncError("This PC already has shop data. The emergency rebuild works only on a new PC (before setup).",
+                        "not_empty", 409)
+    try:
+        summary = offsite.check_phone_copy(req)
+    except BusinessError as exc:
+        raise SyncError(str(exc), "bad_copy", 400) from exc
+    path = offsite.received_dir() / f"phone_copy_{_now():%Y%m%d_%H%M%S}.json"
+    path.write_text(json.dumps(req), encoding="utf-8")
+    _emit("rebuild", path=str(path), summary=summary, phone=summary.get("phone") or "", ip=ip)
+    return seal(key, dict(ok=True, hello=req.get("hello"), summary={k: str(v) if isinstance(v, Decimal) else v
+                                                                   for k, v in summary.items()}), b"rebuild")
 
 
 def sync_wanted() -> bool:
     """Run the network service only when a phone is linked or a link code is waiting."""
+    if restore_code_info() is not None:
+        return True
     if not settings.get("phone_sync_enabled", True):
         return False
     return active_device_count() > 0 or active_code() is not None
@@ -1099,4 +1256,6 @@ __all__ = ["PORT", "DISCOVERY_PORT", "SyncError", "new_link_code", "active_code"
            "handle_sync", "hello", "list_devices", "remove_device", "list_alerts", "resolve_alert",
            "use_phone_version", "update_closing_from_alert", "open_alert_count", "qr_matrix", "local_ips",
            "subscribe", "unsubscribe", "sync_wanted", "seal", "unseal", "pair_key", "pc_identity", "DailyClosing",
+           "new_restore_code", "restore_code_info", "cancel_restore_code", "handle_backup", "handle_restore_upload",
+           "handle_rebuild",
            "Expense", "Payment", "ServiceItem", "q2"]

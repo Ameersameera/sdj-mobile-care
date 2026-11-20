@@ -1,12 +1,15 @@
 """The small network service phones talk to on the shop Wi-Fi (background threads, no cloud).
 
-* TCP 47810 – HTTP with encrypted JSON bodies: /sdj/hello, /sdj/pair, /sdj/sync
+* TCP 47810 – HTTP with encrypted JSON bodies: /sdj/hello, /sdj/pair, /sdj/sync, plus backups:
+  /sdj/backup (a linked phone downloads a backup), /sdj/restore (a phone sends a backup to a new PC),
+  /sdj/rebuild (emergency: a phone sends its shop copy to a new PC)
 * UDP 47811 – "where is the PC?" broadcast from a phone; the PC answers with its name and port
 """
 from __future__ import annotations
 
 import json
 import logging
+import shutil
 import socket
 import sys
 import threading
@@ -56,21 +59,50 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "Not found", "code": "not_found"})
 
+    def _send_file(self, item: dict) -> None:
+        path = item["path"]
+        size = path.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("X-SDJ-Sha256", item.get("sha") or "")
+        self.send_header("X-SDJ-Name", item.get("name") or path.name)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        with open(path, "rb") as f:
+            shutil.copyfileobj(f, self.wfile, 1 << 20)
+
     def do_POST(self):  # noqa: N802
+        path = self.path.split("?")[0]
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = 0
+        ip = self.client_address[0]
+        if path == "/sdj/restore":                 # raw file upload, may be large
+            try:
+                self._send(200, phonesync.handle_restore_upload(self.headers.get("X-SDJ-Auth") or "", self.rfile, n, ip))
+            except phonesync.SyncError as exc:
+                self._send(exc.status, {"error": str(exc), "code": exc.code})
+            except Exception:
+                log.exception("restore upload failed")
+                self._send(500, {"error": "The PC could not save the backup. Details are in the PC's log.",
+                                 "code": "server"})
+            return
         if n <= 0 or n > MAX_BODY:
             self._send(413, {"error": "Request too large", "code": "too_large"})
             return
         try:
             env = json.loads(self.rfile.read(n).decode("utf-8"))
-            ip = self.client_address[0]
-            if self.path == "/sdj/pair":
+            if path == "/sdj/pair":
                 out = phonesync.handle_pair(env, ip)
-            elif self.path == "/sdj/sync":
+            elif path == "/sdj/sync":
                 out = phonesync.handle_sync(env, ip)
+            elif path == "/sdj/backup":
+                self._send_file(phonesync.handle_backup(env, ip))
+                return
+            elif path == "/sdj/rebuild":
+                out = phonesync.handle_rebuild(env, ip)
             else:
                 self._send(404, {"error": "Not found", "code": "not_found"})
                 return
@@ -184,7 +216,7 @@ def service() -> SyncServer:
 
 
 def ensure_running() -> SyncServer:
-    """Start the service when a phone is linked (or a link code is waiting); stop it otherwise."""
+    """Start the service when a phone is linked (or a link / restore code is waiting); stop it otherwise."""
     try:
         wanted = phonesync.sync_wanted()
     except Exception:  # database not ready

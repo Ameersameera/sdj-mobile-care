@@ -3,11 +3,14 @@ package com.sdj.mobilecare
 import com.sdj.mobilecare.data.Net
 import com.sdj.mobilecare.data.Repo
 import com.sdj.mobilecare.data.Store
+import com.sdj.mobilecare.data.UserError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -44,5 +47,21 @@ class LiveLinkTest {
         assertEquals(0, after.failed.size)
         assertTrue(after.sales.any { !it.pending && it.no.startsWith(st.shop!!.invSeries) })
         assertTrue(r.syncOnce())                     // nothing new: quick, nothing breaks
+        // the PC's locked backup came with the sync and is kept on the phone
+        val backup = r.backups.state.value.items.firstOrNull { !it.isReport }
+        assertNotNull("the PC's backup reached the phone", backup)
+        val head = r.backups.sink.open(backup!!.uri)!!.use { s -> ByteArray(6).also { s.read(it) } }
+        assertEquals("SDJB1\n", String(head, Charsets.ISO_8859_1))
+        assertTrue(r.backups.state.value.error.isEmpty())
+        // ... and goes back to a PC that shows "Restore from phone" (the test service shows a restore code)
+        val qr = r.parseRestoreQr("SDJRESTORE:1;h=127.0.0.1;p=${live.getInt("port")};c=${live.getString("restore")};" +
+            "id=${live.getString("pc")};n=Test shop")!!
+        r.sendToPc(backup, qr, "CI phone")
+        try {
+            r.rebuildPc(qr, "CI phone")
+            fail("an emergency rebuild must be refused on a PC that has shop data")
+        } catch (e: UserError) {
+            assertTrue(e.message!!, e.message!!.contains("already has shop data"))
+        }
     }
 }

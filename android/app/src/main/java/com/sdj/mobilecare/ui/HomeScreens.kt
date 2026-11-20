@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,8 +66,19 @@ fun SyncSummary(st: UiState, onClick: () -> Unit) {
 fun HomeScreen(ui: Ui, st: UiState, nav: Nav) {
     val d = st.dash
     val u = st.user
+    val bs by ui.repo.backups.state.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SyncSummary(st) { nav.go(Route.Sync) }
+        if (u?.role == "ADMIN" || bs.items.isNotEmpty()) {
+            val (line, ok) = backupLine(bs)
+            Section(modifier = Modifier.clickable { nav.go(Route.Backups) }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Pill(if (ok) "✓" else "!", if (ok) Good else Warn)
+                    HGap()
+                    Text(line, fontSize = 13.sp, color = if (ok) Ink else Warn, modifier = Modifier.weight(1f))
+                }
+            }
+        }
         if (d != null && u?.can("dashboard") == true) {
             val stale = d.date != st.businessDate
             Text(if (stale) "Figures for ${Dates.nice(d.date)} (from the last sync)" else "Today · ${Dates.nice(st.businessDate)}", color = Muted, fontSize = 13.sp)
@@ -104,7 +116,8 @@ fun MoreScreen(ui: Ui, st: UiState, nav: Nav) {
     var confirmOut by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Section {
-            listOf("Customers & dues" to Route.Customers, "Expenses" to Route.Expenses, "Sync with PC" to Route.Sync).forEach { (t, r) ->
+            listOf("Customers & dues" to Route.Customers, "Expenses" to Route.Expenses, "Sync with PC" to Route.Sync,
+                "Backups" to Route.Backups).forEach { (t, r) ->
                 ListItem(headlineContent = { Text(t, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.clickable { nav.go(r) },
                     colors = ListItemDefaults.colors(containerColor = Color.White))
                 HorizontalDivider()

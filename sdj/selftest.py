@@ -62,6 +62,13 @@ def run_self_test() -> int:
         rep = closing.saved_report(date.today())
         assert rep.kv("Financial report", "Net operating profit") == Decimal("1000.00"), rep.kv("Financial report", "Net operating profit")
         ok("daily closing + PDF + backup; net operating profit ₹1,000.00 as expected")
+        from .core import offsite
+        assert res.get("offsite"), "no off-PC backup after closing"
+        bundle = Path(res["offsite"]["path"])
+        assert offsite.check_bundle(bundle, "selftest1")["counts"]["products"] == 2
+        rc = offsite.create_recovery_code("selftest1")
+        assert offsite.check_bundle(offsite.create_bundle("manual")["path"], rc)["ok"]
+        ok("off-PC backup: locked bundle after closing, opens with the owner password and the recovery code")
         from .output.excel_export import render_report_excel
         render_report_excel(rep, tmp / "closing.xlsx")
         ok("Excel export")

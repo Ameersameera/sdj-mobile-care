@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         val app = application as App
+        app.repo.backups.refresh()                 // storage permission may have changed
         syncLoop = app.scope.launch {
             while (isActive) {
                 val ok = app.repo.syncOnce()

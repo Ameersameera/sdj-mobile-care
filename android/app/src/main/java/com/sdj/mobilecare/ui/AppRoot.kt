@@ -72,7 +72,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /** Runs an action, shows its error (or success) as a snackbar. */
-class Ui(val repo: Repo, val scope: CoroutineScope, val snack: SnackbarHostState) {
+class Ui(val repo: Repo, val scope: CoroutineScope, val snack: SnackbarHostState, val phoneName: String = "Phone") {
     fun toast(msg: String) {
         scope.launch { snack.showSnackbar(msg) }
     }
@@ -106,6 +106,7 @@ sealed class Route {
     data object Customers : Route()
     data object Expenses : Route()
     data object Sync : Route()
+    data object Backups : Route()
 }
 
 class Nav(private val stack: SnapshotStateList<Route>) {
@@ -133,10 +134,15 @@ fun AppRoot(repo: Repo, phoneName: String, startAt: Route = Route.Home) {
     val st by repo.state.collectAsState()
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
-    val ui = remember { Ui(repo, scope, snack) }
+    val ui = remember { Ui(repo, scope, snack, phoneName) }
+    var backupsFirst by remember { mutableStateOf(false) }
     when {
         !st.ready -> Splash()
-        !st.linked || st.sync.removed -> LinkScreen(ui, st, phoneName)
+        (!st.linked || st.sync.removed) && backupsFirst -> {
+            BackHandler { backupsFirst = false }
+            StandaloneBackups(ui, st) { backupsFirst = false }
+        }
+        !st.linked || st.sync.removed -> LinkScreen(ui, st, phoneName) { backupsFirst = true }
         st.user == null -> LoginScreen(ui, st)
         else -> MainShell(ui, st, startAt)
     }
@@ -161,7 +167,7 @@ fun Brand(subtitle: String) {
 
 // ================================================================ link this phone
 @Composable
-fun LinkScreen(ui: Ui, st: UiState, phoneName: String) {
+fun LinkScreen(ui: Ui, st: UiState, phoneName: String, onBackups: () -> Unit = {}) {
     var code by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
     var showHost by remember { mutableStateOf(false) }
@@ -217,6 +223,9 @@ fun LinkScreen(ui: Ui, st: UiState, phoneName: String) {
             }
             Text("No cloud and no internet are used. The phone keeps its own copy, so you can make bills even when the " +
                 "PC is off; everything syncs when the phone is back on the shop Wi-Fi.", color = Muted, fontSize = 12.sp)
+            TextButton(onClick = onBackups, modifier = Modifier.fillMaxWidth()) {
+                Text("New PC for the shop? Send it a backup file", color = Info)
+            }
         }
     }
 }
@@ -317,6 +326,7 @@ fun MainShell(ui: Ui, st: UiState, startAt: Route) {
                 Route.Customers -> CustomersScreen(ui, st)
                 Route.Expenses -> ExpensesScreen(ui, st)
                 Route.Sync -> SyncScreen(ui, st)
+                Route.Backups -> BackupsScreen(ui, st)
             }
         }
     }
@@ -336,6 +346,7 @@ fun titleOf(r: Route, st: UiState): String = when (r) {
     Route.Customers -> "Customers & dues"
     Route.Expenses -> "Expenses"
     Route.Sync -> "Sync with PC"
+    Route.Backups -> "Backups"
 }
 
 @Composable

@@ -1,5 +1,6 @@
 package com.sdj.mobilecare
 
+import com.sdj.mobilecare.data.Backups
 import com.sdj.mobilecare.data.BillDraft
 import com.sdj.mobilecare.data.CustChoice
 import com.sdj.mobilecare.data.DraftLine
@@ -33,7 +34,7 @@ class OfflineNet : Net(null) {
 }
 
 /** A phone linked to the fixture shop with the PC's full data already downloaded. */
-fun testRepo(dir: File, net: Net = OfflineNet()): Repo {
+fun testRepo(dir: File, net: Net = OfflineNet(), backups: Backups? = null): Repo {
     val store = Store(dir)
     val dev = Fixtures.json("device.json")
     store.config.put("device", dev.getString("device")).put("key", dev.getString("key")).put("no", dev.getInt("no"))
@@ -43,7 +44,8 @@ fun testRepo(dir: File, net: Net = OfflineNet()): Repo {
     store.saveConfig()
     val data = Fixtures.json("sync_full.json").getJSONObject("data")
     data.keys().forEach { k -> store.putData(k, data.get(k).toString()) }
-    return Repo(store, net, Dispatchers.Unconfined, "test")
+    return if (backups != null) Repo(store, net, Dispatchers.Unconfined, "test", backups)
+    else Repo(store, net, Dispatchers.Unconfined, "test")
 }
 
 /** The same kinds of entries a shop makes on the phone during a day away from the Wi-Fi. */

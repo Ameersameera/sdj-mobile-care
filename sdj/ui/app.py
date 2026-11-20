@@ -141,8 +141,15 @@ def run(argv: list[str] | None = None) -> int:
     from .login import LoginDialog, SetupWizard
 
     def sign_in() -> bool:
-        dlg = SetupWizard() if user_count() == 0 else LoginDialog()
-        return dlg.exec() == QDialog.Accepted
+        while user_count() == 0:                     # new PC: restore the shop, or start fresh
+            wiz = SetupWizard()
+            if wiz.exec() != QDialog.Accepted:
+                return False
+            if wiz.user is not None:
+                return True
+            set_theme(settings.get("theme") or "light")   # restored: the shop's own settings are back
+            app.setStyleSheet(stylesheet())
+        return LoginDialog().exec() == QDialog.Accepted
 
     if not sign_in():
         return 0

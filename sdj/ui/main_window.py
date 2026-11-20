@@ -178,6 +178,14 @@ class MainWindow(QMainWindow):
         self.phone_pill.clicked.connect(self.show_sync_alerts)
         self.phone_pill.hide()
         lay.addWidget(self.phone_pill)
+        self.backup_pill = QToolButton()
+        self.backup_pill.setObjectName("AlertPill")
+        self.backup_pill.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.backup_pill.setCursor(Qt.PointingHandCursor)
+        self.backup_pill.setText("Backup late")
+        self.backup_pill.clicked.connect(lambda: self.navigate("settings", {"tab": "backup"}))
+        self.backup_pill.hide()
+        lay.addWidget(self.backup_pill)
         self.day_pill = QLabel()
         self.day_pill.setObjectName("DayPill")
         lay.addWidget(self.day_pill)
@@ -307,6 +315,18 @@ class MainWindow(QMainWindow):
         self.phone_pill.setVisible(k > 0)
         self.phone_pill.setText(f"{k} phone alert{'s' if k != 1 else ''}")
         self.phone_pill.setIcon(icons.icon("smartphone", p.warn, 16))
+        try:
+            from ..core import offsite
+            from ..core.auth import current_user as _cu
+            bst = offsite.status() if _cu().can("backup") else None
+        except Exception:
+            log.exception("backup status failed")
+            bst = None
+        late = bool(bst and bst["late"])
+        self.backup_pill.setVisible(late)
+        if late:
+            self.backup_pill.setIcon(icons.icon("hard-drive", p.warn, 16))
+            self.backup_pill.setToolTip("\n".join(bst["warnings"]) + "\n\nClick to open Settings → Backup")
         n = st["low_stock"] + st["out_of_stock"]
         self.alert_pill.setVisible(n > 0)
         self.alert_pill.setText(f"{n} stock alert{'s' if n != 1 else ''}")

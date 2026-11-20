@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
@@ -16,12 +17,14 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.nio.ByteBuffer
+import java.security.MessageDigest
 
 /** What the phone keeps on disk: settings, the PC's data (one file per list) and entries not yet synced. */
 class Store(val dir: File) {
     private val dataDir = File(dir, "data").apply { mkdirs() }
     private val cfgFile = File(dir, "config.json")
     private val opsFile = File(dir, "ops.json")
+    private val sentFile = File(dir, "sent.json")
 
     var config: JSONObject = read(cfgFile)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
         private set
@@ -32,11 +35,16 @@ class Store(val dir: File) {
     fun ops(): JSONArray = read(opsFile)?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
     fun saveOps(a: JSONArray) = write(opsFile, a.toString())
 
+    /** Entries the PC already saved (last 10 days) – sent again if the PC's data is restored from a backup. */
+    fun sent(): JSONArray = read(sentFile)?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
+    fun saveSent(a: JSONArray) = write(sentFile, a.toString())
+
     fun wipe() {
         dataDir.deleteRecursively()
         dataDir.mkdirs()
         cfgFile.delete()
         opsFile.delete()
+        sentFile.delete()
         config = JSONObject()
     }
 
@@ -92,6 +100,7 @@ open class Net(private val context: Context?) {
 
     /** Connects over the first route that works; once connected, errors are not retried (no double sending). */
     private fun <T> viaRoutes(url: URL, connectMs: Int, readMs: Int, method: String, contentType: String? = null,
+                              headers: Map<String, String> = emptyMap(), fixedLength: Long = -1L,
                               use: (HttpURLConnection) -> T): T {
         var last: IOException? = null
         for (r in routes()) {
@@ -100,6 +109,8 @@ open class Net(private val context: Context?) {
                 conn.requestMethod = method
                 if (method == "POST") conn.doOutput = true
                 if (contentType != null) conn.setRequestProperty("Content-Type", contentType)
+                headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+                if (fixedLength >= 0) conn.setFixedLengthStreamingMode(fixedLength)
                 try {
                     conn.connect()
                 } catch (e: IOException) {
@@ -126,6 +137,53 @@ open class Net(private val context: Context?) {
             }
             JSONObject(text)
         }
+    }
+
+    private fun fail(conn: HttpURLConnection, code: Int): Nothing {
+        val text = conn.errorStream?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
+        val j = runCatching { JSONObject(text) }.getOrNull() ?: JSONObject()
+        throw PcError(j.str("error", "The PC answered with error $code."), j.str("code", "http"), code)
+    }
+
+    /** Downloads a backup into [dest] (encrypted request); returns the SHA-256 of what arrived. */
+    open fun download(host: String, port: Int, path: String, body: JSONObject, dest: File, readTimeoutMs: Int = 120_000): String {
+        val bytes = body.toString().toByteArray(Charsets.UTF_8)
+        return viaRoutes(URL("http://$host:$port$path"), 3500, readTimeoutMs, "POST", "application/json") { conn ->
+            conn.outputStream.use { it.write(bytes) }
+            val code = conn.responseCode
+            if (code !in 200..299) fail(conn, code)
+            val md = MessageDigest.getInstance("SHA-256")
+            conn.inputStream.use { ins ->
+                dest.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        md.update(buf, 0, n)
+                        out.write(buf, 0, n)
+                    }
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        }
+    }
+
+    /** Sends a file as the raw body to a PC that shows a restore code; [auth] proves the phone knows the code. */
+    open fun upload(host: String, port: Int, path: String, auth: String, size: Long, source: () -> InputStream,
+                    readTimeoutMs: Int = 180_000): JSONObject =
+        viaRoutes(URL("http://$host:$port$path"), 3500, readTimeoutMs, "POST", "application/octet-stream",
+            mapOf("X-SDJ-Auth" to auth), size) { conn ->
+            conn.outputStream.use { out -> source().use { it.copyTo(out, 64 * 1024) } }
+            val code = conn.responseCode
+            if (code !in 200..299) fail(conn, code)
+            JSONObject(conn.inputStream.use { String(it.readBytes(), Charsets.UTF_8) })
+        }
+
+    /** True on Wi-Fi (or another network that is not charged by the MB). */
+    open fun unmetered(): Boolean {
+        val cm = context?.getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
     }
 
     open fun hello(host: String, port: Int): JSONObject =
