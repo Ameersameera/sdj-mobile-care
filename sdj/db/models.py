@@ -538,6 +538,7 @@ class SyncDevice(Base):
     last_ip: Mapped[str] = mapped_column(String(60), default="")
     app_version: Mapped[str] = mapped_column(String(20), default="")
     last_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # replay protection
+    backups: Mapped[bool | None] = mapped_column(Boolean)                      # keeps backups (None: owners yes)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime)
     removed_by: Mapped[str] = mapped_column(String(80), default="")
 
@@ -574,4 +575,28 @@ class SyncAlert(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
     resolved_by: Mapped[str] = mapped_column(String(80), default="")
     resolution: Mapped[str] = mapped_column(Text, default="")
+
+
+# ---------------------------------------------------------------- backups kept outside this PC
+class OffsiteItem(Base):
+    """An encrypted backup bundle (or a day's closing report) made to be kept on phones / a 2nd folder."""
+    __tablename__ = "offsite_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)           # BACKUP / REPORT
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    label: Mapped[str] = mapped_column(String(20), default="")
+    business_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class OffsiteDelivery(Base):
+    """Which phone already has which backup / report."""
+    __tablename__ = "offsite_deliveries"
+    __table_args__ = (UniqueConstraint("item_id", "device_id", name="uq_offsite_delivery"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("offsite_items.id"), nullable=False, index=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("sync_devices.id"), nullable=False, index=True)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 

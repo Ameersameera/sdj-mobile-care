@@ -345,8 +345,8 @@ class SettingsPage(Page):
         f.addRow("Backup folder", hbox(self.b_dir, button("Choose…", "", None, self.choose_backup_dir)))
         f.addRow("Keep last", self.b_keep)
         c.add(f)
-        c.add(label("Tip: choose a folder on a USB drive, another disk or a OneDrive/Google Drive folder for an off-computer copy.",
-                    "Muted", wrap=True))
+        c.add(label("These are plain copies on this PC (for quick undo). The off-PC backups above are the ones that "
+                    "survive a dead PC.", "Muted", wrap=True))
         c.add(hbox(button("Save backup settings", "primary", "save", self.save_backup), None))
         bc = Card("Backups")
         self.b_table = DataTable([Col("name", "File", width=360), Col("modified", "Created", "datetime", 170),
@@ -358,7 +358,9 @@ class SettingsPage(Page):
                     button("Restore selected", "danger", "archive-restore", self.restore_selected),
                     button("Restore from file…", "danger", "upload", self.restore_file),
                     button("Open folder", "ghost", None, lambda: open_folder(backup.backups_dir())), None))
-        self._add("backup", _tab(c, bc), "Backup")
+        from ..offsite_ui import OffsiteCard
+        self.offsite_card = OffsiteCard(self)
+        self._add("backup", _tab(self.offsite_card, c, bc), "Backup")
 
     def choose_backup_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Backup folder", self.b_dir.text())
@@ -397,9 +399,10 @@ class SettingsPage(Page):
             self._restore(r["path"])
 
     def restore_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choose backup", str(backup.backups_dir()), "Database (*.db)")
-        if path:
-            self._restore(path)
+        from ..offsite_ui import restore_from_file
+        if restore_from_file(self, str(backup.backups_dir())):
+            info(self, "Restored", "The backup was restored. SDJ Mobile Care will now close – please open it again.")
+            QApplication.instance().quit()
 
     # ------------------------------------------------------------ data reset (owner only)
     RESET_CHOICES = [
@@ -758,6 +761,8 @@ class SettingsPage(Page):
             self.refresh_categories()
         if hasattr(self, "b_table"):
             self.b_table.set_rows(backup.list_backups())
+        if hasattr(self, "offsite_card"):
+            self.offsite_card.refresh()
         if hasattr(self, "u_table"):
             self.u_table.set_rows(auth.list_users())
         if hasattr(self, "audit_table"):

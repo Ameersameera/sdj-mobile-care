@@ -427,3 +427,139 @@ def test_phone_link_tab_code_qr_devices_and_alerts(gui, make_product, monkeypatc
     assert not win.phone_pill.isHidden()
     syncserver.service().stop()
     assert _errors(msgs) == []
+
+
+def test_phone_link_tab_turns_backups_on_for_a_staff_phone(gui, monkeypatch):
+    win, msgs, app = gui
+    from sdj.core import auth, phonesync, syncserver
+    from sdj.ui.phone_link import start_bridge
+    from test_phone_sync import FakePhone
+    start_bridge()
+    monkeypatch.setattr(syncserver, "_service", syncserver.SyncServer(port=0, udp_port=0, host="127.0.0.1"))
+    uid = auth.create_user("kavin", "staff123", "CASHIER", "Kavin")
+    FakePhone().pair(phonesync.new_link_code(uid)["code"], name="Staff phone")
+    win.navigate("settings")
+    page = win.pages["settings"]
+    page.tabs.setCurrentIndex(page.tab_index["phone"])
+    tab = page.phone_tab
+    tab.unlock_pw.setText("admin123")
+    tab.unlock()
+    app.processEvents()
+    assert tab.dev_table.rows()[0]["backups_label"] == "No"          # staff phones: off unless turned on
+    tab.dev_table.view.selectRow(0)
+    tab.toggle_backups()
+    assert tab.dev_table.rows()[0]["backups_label"] == "Yes" and phonesync.list_devices()[0]["keeps_backups"]
+    syncserver.service().stop()
+    assert _errors(msgs) == []
+
+
+def test_settings_backup_tab_off_pc_backups_and_recovery_code(gui, tmp_path, monkeypatch):
+    win, msgs, app = gui
+    from datetime import datetime, timedelta
+    from PySide6.QtWidgets import QFileDialog
+    from sdj.ui import offsite_ui, phone_link
+    win.navigate("settings")
+    page = win.pages["settings"]
+    page.tabs.setCurrentIndex(page.tab_index["backup"])
+    card = page.offsite_card
+    assert "No off-PC backup yet" in card.status_lbl.text()
+    card.backup_now()
+    assert "Last off-PC backup" in card.status_lbl.text() and "checked" in card.status_lbl.text()
+    pen = tmp_path / "pendrive"
+    pen.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(pen)))
+    card.choose_folder()
+    assert list(pen.glob("*.sdjb")) and f"2nd folder: {pen}" in card.status_lbl.text()
+
+    def pw_exec(self):
+        self.pw.setText("admin123")
+        return QDialog.Accepted
+    monkeypatch.setattr(phone_link.PasswordDialog, "exec", pw_exec)
+    shown = []
+    monkeypatch.setattr(offsite_ui.RecoveryCodeDialog, "exec", lambda self: shown.append(self.code) or 1)
+    card.make_code()
+    assert shown and len(shown[0]) == 29 and "Recovery code: made" in card.status_lbl.text()
+    dlg = offsite_ui.RecoveryCodeDialog(win, shown[0])
+    assert not dlg.ok_btn.isEnabled()
+    dlg.done_box.setChecked(True)
+    assert dlg.ok_btn.isEnabled()
+    from sdj.output.pdf_recovery import recovery_code_pdf
+    assert recovery_code_pdf(shown[0], settings.shop_info(), tmp_path / "rc.pdf").read_bytes().startswith(b"%PDF")
+    win.update_header()
+    assert win.backup_pill.isHidden()
+    settings.set_value("offsite_second_last", (datetime.now() - timedelta(days=9)).isoformat())
+    win.update_header()
+    assert not win.backup_pill.isHidden() and "2nd backup folder" in win.backup_pill.toolTip()
+    win.navigate("dashboard")
+    win.pages["dashboard"].refresh()
+    assert "2nd folder" in win.pages["dashboard"].backup_btn.text()
+    assert _errors(msgs) == []
+
+
+def test_new_pc_first_screen_restores_from_phone_or_file(db, qapp, make_product, tmp_path, monkeypatch):
+    """A fresh install offers: restore from phone (QR → backup arrives → password), restore from a file, start fresh."""
+    import hashlib
+    import json
+    import urllib.request
+    from pathlib import Path
+    from PySide6.QtWidgets import QFileDialog
+    from sdj.core import auth, offsite, phonesync, syncserver
+    from sdj.core.phonesync import pair_key, seal
+    from sdj.ui import offsite_ui
+    from sdj.ui.login import SetupWizard
+    from sdj.ui.theme import set_theme, stylesheet
+    from test_offsite import _new_pc
+    msgs = []
+    for name in ("critical", "warning", "information"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, _n=name, **k: msgs.append((_n, a)) or QMessageBox.Ok))
+    make_product("Charger 20W", "Chargers", 250, 400, qty=10)
+    bundle = Path(offsite.create_bundle("manual")["path"])
+    blob = bundle.read_bytes()
+    keep = tmp_path / "pendrive" / bundle.name
+    keep.parent.mkdir()
+    keep.write_bytes(blob)
+    _new_pc(monkeypatch, tmp_path, "pc2")
+    set_theme("light")
+    qapp.setStyleSheet(stylesheet())
+    wiz = SetupWizard()
+    wiz.show()
+    qapp.processEvents()
+    assert wiz.stack.currentIndex() == 0
+    monkeypatch.setattr(syncserver, "_service", syncserver.SyncServer(port=0, udp_port=0, host="127.0.0.1"))
+    dlg = offsite_ui.RestoreFromPhoneDialog(wiz)
+    dlg.show()
+    qapp.processEvents()
+    code = dlg.code_lbl.text().replace("-", "")
+    assert len(code) == 10 and dlg.qr.matrix and syncserver.service().running
+    pc = phonesync.pc_identity()
+    meta = dict(name=bundle.name, size=len(blob), sha=hashlib.sha256(blob).hexdigest(), phone="Owner phone")
+    env = seal(pair_key(code, pc), meta, b"restore")
+    env["pc"] = pc
+    req = urllib.request.Request(f"http://127.0.0.1:{syncserver.service().port}/sdj/restore", data=blob,
+                                 headers={"X-SDJ-Auth": json.dumps(env), "Content-Type": "application/octet-stream"})
+    assert json.loads(urllib.request.urlopen(req, timeout=30).read())
+    for _ in range(20):
+        qapp.processEvents()
+    assert dlg.pages.currentIndex() == 1 and "Owner phone" in dlg.file_lbl.text() and "1 products" in dlg.file_lbl.text()
+    dlg.secret.setText("wrong")
+    dlg.restore_file()
+    assert not dlg.restored and msgs and msgs[-1][0] == "critical"
+    dlg.secret.setText("admin123")
+    dlg.restore_file()
+    assert dlg.restored and auth.user_count() == 1
+    assert not syncserver.service().running and phonesync.restore_code_info() is None   # closed with the dialog
+    # another new PC: restore from a file (pen drive / Google Drive download)
+    _new_pc(monkeypatch, tmp_path, "pc3")
+    wiz2 = SetupWizard()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(keep), "")))
+
+    def secret_exec(self):
+        self.secret.setText("admin123")
+        return QDialog.Accepted
+    monkeypatch.setattr(offsite_ui.SecretDialog, "exec", secret_exec)
+    wiz2.restore_file()
+    assert wiz2.restored and wiz2.result() == QDialog.Accepted and auth.user_count() == 1
+    assert len([m for m in msgs if m[0] == "critical"]) == 1          # only the wrong password above
+    wiz3 = SetupWizard()
+    wiz3.stack.setCurrentIndex(1)
+    assert wiz3.username.text() == "admin"

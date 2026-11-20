@@ -2,8 +2,11 @@ package com.sdj.mobilecare
 
 import android.app.Application
 import android.os.Build
+import com.sdj.mobilecare.data.Backups
+import com.sdj.mobilecare.data.DownloadsSink
 import com.sdj.mobilecare.data.Net
 import com.sdj.mobilecare.data.Repo
+import com.sdj.mobilecare.data.SafDrive
 import com.sdj.mobilecare.data.Store
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,9 +20,12 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        repo = Repo(Store(filesDir), Net(this), appVersion = BuildConfig.VERSION_NAME)
+        val net = Net(this)
+        repo = Repo(Store(filesDir), net, appVersion = BuildConfig.VERSION_NAME,
+            backups = Backups(filesDir, DownloadsSink(this), SafDrive(this)) { net.unmetered() })
         repo.onNewEntry = { scope.launch { repo.syncOnce() } }
         scope.launch { repo.load() }
+        runCatching { SyncWorker.start(this) }          // background sync on Wi-Fi (closing backups arrive by themselves)
     }
 
     companion object {

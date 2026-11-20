@@ -3,7 +3,7 @@
 ; Shop data lives in %LOCALAPPDATA%\SDJ Mobile Care – uninstalling the app never deletes it.
 
 #define MyAppName "SDJ Mobile Care"
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.4.0"
 #define MyAppExeName "SDJMobileCare.exe"
 
 [Setup]

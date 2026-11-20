@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import shutil
 import sqlite3
 from datetime import datetime, timedelta
@@ -130,6 +131,8 @@ def restore_backup(src: str | Path) -> Path:
         os.replace(tmp, live)
         open_database(live)
         settings.clear_cache()
+        # phones re-send their recent entries after a restore (each entry is still saved only once)
+        settings.set_value("data_epoch", secrets.token_hex(6))
     log.info("Database restored from %s (safety copy: %s)", src, safety)
     return safety or live
 

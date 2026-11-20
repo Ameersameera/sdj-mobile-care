@@ -154,6 +154,32 @@ The Android app (`SDJMobileCare-Phone-<version>.apk` on the Releases page) uses 
   phone entries are merged (at most once an hour).
 * The PC is the main copy: products, purchases, returns, stock adjustment, closing, reports and settings stay on the PC.
 
+### Off-PC backups – phone, pen drive, Google Drive (Settings → Backup)
+
+If the PC (and its disk) is lost, the shop's data comes back from a copy kept somewhere else.
+
+* **After every Close Day** the PC makes a **locked backup** (`.sdjb`: database, shop logo and the day's closing report).
+  It is encrypted with AES-256-GCM; it opens only with an **owner's password** (as it was when the backup was made) or the
+  **recovery code**. Each backup is read back and checked right after it is made.
+* **Owner's phone**: the backup and the closing report go to the linked phone(s) over the shop Wi-Fi at the next sync and
+  are saved in **Downloads → SDJ Backups** – they stay even if the app is removed. The phone keeps the last 30 daily
+  backups plus one per month (or *Keep every backup*). Owner phones keep backups by default; staff phones only if the
+  owner turns it on (*Settings → Phone link → Backups on this phone*).
+* **2nd backup folder**: choose a pen drive, or a folder inside **Google Drive for desktop** (e.g. `G:\My Drive\SDJ Backups`);
+  every backup is copied there too (last 30 + one per month). If the pen drive is away, the copy is made when it is back.
+* **Google Drive from the phone** (optional): in the phone app *Backups → Choose Google Drive file* once; every new backup is
+  then copied into that Drive file (Google Drive keeps older versions for 30 days). *Only on Wi-Fi* is on by default.
+* **Recovery code**: *Settings → Backup → Create recovery code* – 24 letters, shown once, print it and keep it away from
+  the PC. It opens backups made from then on, even if the owner's password is forgotten.
+* **Warnings**: the dashboard shows where the last backup is; a **Backup late** pill appears when no phone got a backup for
+  2 days or the 2nd folder was not updated for 7 days.
+* **New PC**: install, and the first screen offers **Restore from phone** (a QR code; in the phone app *Backups → Send to
+  PC*), **Restore from a backup file** (pen drive / Google Drive download) or **Start fresh**. Linked phones keep working
+  after the restore, and entries they made after that backup are sent again automatically (each is saved only once).
+* **Emergency – no backup anywhere**: in the phone app *Backups → Rebuild a new PC from this phone* (owner) sends the phone's
+  copy to the new PC (*Restore from phone* screen): products and stock, IMEIs in stock, customers with their dues, open
+  repair jobs and the logins come back. Old bills, purchases, expenses, cost prices and the logo are not on the phone.
+
 ### Resetting data (Settings → Reset, owner only)
 * Clear practice data or wrong entries: **Sales & bills**, **Repair jobs**, **Purchases**, **Expenses**, **Daily closings**,
   **Stock** (set to 0), **Products**, **Customers** / **Suppliers** with nothing left – for *All time* or *From – To* dates –
@@ -169,10 +195,11 @@ The Android app (`SDJMobileCare-Phone-<version>.apk` on the Releases page) uses 
 ### Backup & restore instructions
 * **Automatic**: a verified backup is made once a day at start-up, after every *Close Day* and when the app closes
   (the last 30 are kept – adjustable).
-* **Manual**: *Settings → Backup & restore → Back up now*, or *Save a copy to…* (USB drive, another disk, cloud folder).
-  Tip: set the backup folder to a OneDrive / Google Drive folder for an automatic off-computer copy.
-* **Restore**: *Settings → Backup & restore → Restore selected* (or *Restore from file…*). The app checks that the file is a
-  healthy SDJ database, saves a safety copy of the current data, restores, and asks you to reopen the app.
+* **Manual**: *Settings → Backup → Back up now*, or *Save a copy to…* (USB drive, another disk, cloud folder);
+  *Make off-PC backup now* makes a locked backup for the phones and the 2nd folder (see above).
+* **Restore**: *Settings → Backup → Restore selected* (or *Restore from file…*, which also takes locked `.sdjb` backups, or
+  *Restore from phone…*). The app checks the file, saves a safety copy of the current data, restores, and asks you to
+  reopen the app.
 * **Crash recovery**: every start runs an integrity check. If the database is damaged (e.g. power cut during a disk write),
   the app offers to restore the most recent good backup automatically.
 * Command line check: `python scripts/init_database.py --check`.

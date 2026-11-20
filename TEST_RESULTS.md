@@ -1,6 +1,6 @@
 # Test results – SDJ Mobile Care
 
-**Result: 87 passed in 111.38s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
+**Result: 102 passed, 1 skipped (Windows-only firewall test) in 147s locally · 103 passed on the GitHub Windows runner** · run on 20 Nov 2026 · Python 3.13 · PySide6 6.12 · SQLAlchemy 2.1 · ReportLab 5.0 · Matplotlib 3.11 · OpenPyXL 3.1
 
 Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 
@@ -110,6 +110,22 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_removed_phone_cannot_sync` | Remove phone needs the owner's password and stops that phone at once |
 | ✅ PASSED | `test_network_service_hello_sync_and_discovery` | The real network service: hello, encrypted sync over HTTP and Wi-Fi discovery |
 
+## Off-PC backups, restore on a new PC, emergency rebuild  (`test_offsite.py`)
+
+| Result | Test | What it proves |
+|---|---|---|
+| ✅ PASSED | `test_closing_makes_an_encrypted_checked_bundle` | Close Day makes a locked backup (no readable shop data inside); it opens only with the owner password; any changed byte is detected; the closing report is inside |
+| ✅ PASSED | `test_recovery_code_opens_backups_when_the_password_is_lost` | The recovery code opens backups (spaces / lower case fine); after a password change new backups use the new password, old ones keep the old one |
+| ✅ PASSED | `test_restore_from_file_on_a_new_pc_brings_data_and_logo` | A brand-new PC restores a backup file from a pen drive: data, login, shop logo (moved to the new PC's folder) and the linked phone come back; a wrong password changes nothing |
+| ✅ PASSED | `test_second_backup_folder_copy_retention_and_late_warning` | Every backup is copied to the 2nd folder; a missing pen drive is caught up later; "late" warning after 7 days |
+| ✅ PASSED | `test_retention_keeps_30_days_and_one_per_month` | 2nd folder keeps the last 30 daily backups plus one per month |
+| ✅ PASSED | `test_closing_backup_and_report_reach_the_owner_phone` | After Close Day the owner's phone gets the backup + closing report with the next sync (checked by SHA-256); after the phone confirms, only new ones are sent |
+| ✅ PASSED | `test_staff_phone_keeps_backups_only_when_turned_on` | Staff phones get no backups unless the owner turns it on |
+| ✅ PASSED | `test_backup_download_over_the_network` | Backup download over the real network service; a replayed request is refused |
+| ✅ PASSED | `test_new_pc_restores_the_backup_sent_from_the_phone` | New PC shows a restore code; the phone uploads the backup over HTTP (wrong code / damaged file refused); restore keeps the phone linked and tells it to re-send the entry made after the backup – saved once |
+| ✅ PASSED | `test_rebuild_needs_a_waiting_restore_code` | No restore screen open → the phone's copy is refused |
+| ✅ PASSED | `test_emergency_rebuild_from_the_phone_copy` | No backup: a new PC is rebuilt from the phone's copy – same logins, product numbers, stock, IMEIs, customer dues, open repair jobs with advances; numbering continues; the phone stays linked; only once, only with the owner password |
+
 ## Desktop interface (offscreen GUI tests)  (`test_gui_smoke.py`)
 
 | Result | Test | What it proves |
@@ -131,6 +147,9 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_billing_edit_mode_keeps_the_invoice_number` | Sales History → Edit bill opens the bill in Billing; saving keeps the invoice number |
 | ✅ PASSED | `test_staff_gets_owner_approval_to_cancel` | Staff cancel works with owner approval; the button hides when approval is switched off |
 | ✅ PASSED | `test_phone_link_tab_code_qr_devices_and_alerts` | Settings → Phone link: password lock, one-time code + QR, linked phones and alerts |
+| ✅ PASSED | `test_phone_link_tab_turns_backups_on_for_a_staff_phone` | Settings → Phone link: "Keeps backups" column and the on / off button |
+| ✅ PASSED | `test_settings_backup_tab_off_pc_backups_and_recovery_code` | Settings → Backup: off-PC backup now, 2nd folder, recovery code (print PDF), "Backup late" pill and the dashboard line |
+| ✅ PASSED | `test_new_pc_first_screen_restores_from_phone_or_file` | First screen of a new PC: Restore from phone (QR → backup arrives over the network → password) and Restore from a backup file; Start fresh still works |
 
 ## Android phone app  (`android/`, run by GitHub Actions on every push)
 
@@ -139,5 +158,7 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `CalcTest` | 400 bills computed by the PC code give the same paise on the phone (GST incl. / excl., discounts, round off, amount in words) |
 | ✅ PASSED | `CryptoTest` | PC password hashes, the pairing key and encrypted envelopes work in both directions (Tamil text too) |
 | ✅ PASSED | `RepoTest` | Offline bills, edit, cancel, expense, dues payment and a repair job update stock, dues and today's figures; the sync request holds every entry once |
-| ✅ PASSED | `ScreensTest` | All 15 phone screens are drawn with the sample shop |
+| ✅ PASSED | `ScreensTest` | All 17 phone screens are drawn with the sample shop (incl. Backups, and Backups before linking) |
+| ✅ PASSED | `BackupLogicTest` | Keep rule (30 days + one per month); closing backup + report arrive with the sync, are checked by SHA-256, saved in Downloads → SDJ Backups and confirmed to the PC; Google Drive copy waits for Wi-Fi; a damaged download is not kept; entries are re-sent once after a PC restore; Send to PC and the emergency shop copy use the restore code |
+| ✅ PASSED | `LiveLinkTest` | Against the real PC service: link, sign in, 7 offline entries synced, the PC's locked backup downloaded and sent back as to a new PC; the emergency rebuild is refused on a PC that has data |
 | ✅ PASSED | `check_phone_ops.py` | The PC code replays the phone's sync request and accepts all 7 entries with exactly the same totals |

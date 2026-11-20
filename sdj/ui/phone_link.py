@@ -33,6 +33,17 @@ class SyncBridge(QObject):
         self.timer.timeout.connect(self.check_service)
         self.timer.start(20_000)
         self.check_service()
+        self.backup_timer = QTimer(self)               # pen drive plugged in again → copy the latest backup
+        self.backup_timer.timeout.connect(self.catch_up)
+        self.backup_timer.start(5 * 60_000)
+        QTimer.singleShot(30_000, self.catch_up)
+
+    def catch_up(self) -> None:
+        try:
+            from .offsite_ui import catch_up_in_background
+            catch_up_in_background()
+        except Exception:
+            log.exception("2nd folder check failed")
 
     def _relay(self, event: str, info: dict) -> None:      # any thread
         self.event.emit(event, dict(info))
@@ -58,6 +69,8 @@ class SyncBridge(QObject):
         elif event in ("removed", "code"):
             self.check_service()
             self.devices_changed.emit()
+        elif event == "restore_code":
+            self.check_service()
         elif event == "alerts":
             changed("all")
         elif event == "seen":
@@ -362,12 +375,17 @@ class PhoneLinkTab(QWidget):
         self.dev_table = DataTable([Col("name", "Phone", width=180, bold=True), Col("user_name", "Signs in as", width=150),
                                     Col("series", "Bill series", width=90), Col("linked_at", "Linked on", "datetime", 150),
                                     Col("last_seen_at", "Last sync", "datetime", 150), Col("last_ip", "Address", width=120),
-                                    Col("alerts", "Open alerts", "int", 110)], search=False, stretch="name")
+                                    Col("backups_label", "Keeps backups", width=120),
+                                    Col("alerts", "Open alerts", "int", 100)], search=False, stretch="name")
         self.dev_table.setMinimumHeight(170)
         ph.add(self.dev_table)
         ph.add(hbox(button("Remove phone", "danger", "trash-2", self.remove_phone),
                     label("for a lost or replaced phone – it stops syncing at once; its old entries stay", "Muted"),
-                    None, button("Refresh", "", "refresh-cw", self.refresh)))
+                    None, button("Backups on this phone: on / off", "", "hard-drive-download", self.toggle_backups),
+                    button("Refresh", "", "refresh-cw", self.refresh)))
+        ph.add(label("A phone that keeps backups gets the encrypted backup and the closing report after every daily "
+                     "closing and saves them in Downloads → SDJ Backups (owner phones: on by default).", "Muted",
+                     wrap=True))
         lay.addWidget(ph)
 
         al = Card("Sync alerts", "last piece sold on both, bill changed on both, entries for a closed day …")
@@ -420,7 +438,8 @@ class PhoneLinkTab(QWidget):
         self.test_lbl.setText((f"Check from the phone: open  http://{ips[0]}:{phonesync.PORT}  in Chrome – it should say "
                                "'SDJ Mobile Care phone sync is working'. If it does not open, the firewall, an antivirus "
                                "or the Wi-Fi router is blocking it.") if ips and svc.running else "")
-        self.dev_table.set_rows(phonesync.list_devices())
+        self.dev_table.set_rows([d | {"backups_label": "Yes" if d.get("keeps_backups") else "No"}
+                                 for d in phonesync.list_devices()])
         n = phonesync.open_alert_count()
         self.alert_lbl.setText(f"{n} open alert{'s' if n != 1 else ''}" if n else "No open alerts – all good.")
         self._show_code(phonesync.active_code())
@@ -487,6 +506,17 @@ class PhoneLinkTab(QWidget):
         if dlg.exec() == QDialog.Accepted and run_safely(self, phonesync.remove_device, row["id"], dlg.pw.text(),
                                                          success="Phone removed"):
             self.refresh()
+
+    def toggle_backups(self) -> None:
+        row = self.dev_table.selected()
+        if not row:
+            error(self, "Select the phone first.")
+            return
+        from ..core import offsite
+        on = not row.get("keeps_backups")
+        if run_safely(self, offsite.set_device_backups, row["id"], on,
+                      success=f"'{row['name']}' {'keeps' if on else 'no longer keeps'} backups"):
+            self.refresh(light=True)
 
     def open_alerts(self) -> None:
         SyncAlertsDialog(self).exec()

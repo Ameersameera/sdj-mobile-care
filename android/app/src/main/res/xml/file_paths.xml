@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="bills" path="bills/" />
+    <files-path name="backups" path="backup-files/" />
+    <external-path name="sdj_backups" path="Download/SDJ Backups/" />
 </paths>

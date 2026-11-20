@@ -1,7 +1,8 @@
 """CI helper: runs the real PC sync service on 127.0.0.1 with the fixture shop, for the phone's live HTTP test.
 
 Usage: python android/tools/pc_server_for_tests.py android/build/test-out   (keeps running until killed)
-Writes live_code.json (a fresh one-time code) for LiveLinkTest.kt.
+Writes live_code.json (a fresh one-time code and a restore code) for LiveLinkTest.kt. A locked backup is made first,
+so the phone downloads it with its first sync and then sends it back like it would to a new PC.
 """
 import json
 import os
@@ -28,10 +29,14 @@ open_database(config.db_path())
 settings.clear_cache()
 auth.set_current_user(auth.authenticate("admin", "admin123"))
 phonesync.subscribe(lambda event, data: print("event", event, data, flush=True))
+from sdj.core import offsite  # noqa: E402
+offsite.create_bundle("closing")                      # the phone downloads it with its first sync
 info = phonesync.new_link_code(1)
+restore = phonesync.new_restore_code()                # the phone sends that backup back (as to a new PC)
 srv = SyncServer(port=phonesync.PORT, udp_port=phonesync.DISCOVERY_PORT, host="127.0.0.1")
 assert srv.start(), srv.error
-(OUT / "live_code.json").write_text(json.dumps(dict(code=info["code"], pc=phonesync.pc_identity(), port=phonesync.PORT)))
+(OUT / "live_code.json").write_text(json.dumps(dict(code=info["code"], pc=phonesync.pc_identity(), port=phonesync.PORT,
+                                                    restore=restore["code"])))
 print("PC sync service for tests on 127.0.0.1:%s, code %s" % (phonesync.PORT, info["display"]), flush=True)
 while True:
     time.sleep(60)
