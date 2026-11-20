@@ -163,7 +163,7 @@ class BackupLogicTest {
         wifi = true
         assertTrue(r.syncOnce())
         val acks = net.requests.last().arr("acks")
-        assertEquals(setOf(11L, 12L), (0 until acks.length()).map { acks.getLong(it) }.toSet())
+        assertEquals(setOf(sha(bundle), sha(pdf)), (0 until acks.length()).map { acks.getString(it) }.toSet())
         assertArrayEquals(bundle, driveFile.readBytes())
         assertFalse(backups.state.value.drivePending)
         assertTrue(backups.state.value.driveLast.isNotEmpty())

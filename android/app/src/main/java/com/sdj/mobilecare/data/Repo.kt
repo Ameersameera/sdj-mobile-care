@@ -777,7 +777,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             val needFull = full || shop == null || users.isEmpty()
             val req = JSONObject().put("seq", seq).put("ops", wire).put("full", needFull).put("app", appVersion)
                 .put("token", if (needFull) JSONObject.NULL else cfg.str("token")).put("hashes", cfg.optJSONObject("hashes") ?: JSONObject())
-                .put("acks", JSONArray(backups.recentIds()))
+                .put("acks", JSONArray(backups.recentShas()))
             sync = sync.copy(running = true)
             publish()
             Crypto.seal(key, req, device.toByteArray()).put("d", device) to ops.map { it.str("id") }.toSet()
@@ -926,7 +926,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         for (i in 0 until list.length()) {
             val meta = list.optJSONObject(i) ?: continue
             val id = meta.lng("id")
-            if (id <= 0 || backups.has(id)) continue
+            if (id <= 0 || backups.has(meta.str("sha"))) continue
             val tmp = File(work, "backup.part")
             try {
                 val seq = mutex.withLock {

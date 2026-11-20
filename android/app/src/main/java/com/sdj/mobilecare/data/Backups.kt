@@ -204,12 +204,13 @@ class Backups(private val dir: File, val sink: BackupSink, private val drive: Dr
 
     private fun now() = LocalDateTime.now().withNano(0).toString()
 
-    @Synchronized fun has(id: Long): Boolean = id > 0 && list().any { it.id == id }
+    /** Already saved? Checked by the file's SHA-256 – a restored or new PC numbers its backups again. */
+    @Synchronized fun has(sha: String): Boolean = sha.isNotEmpty() && list().any { it.sha == sha }
 
-    /** Numbers of what this phone saved lately – sent to the PC so it knows the phone has them. */
-    @Synchronized fun recentIds(): List<Long> {
+    /** SHA-256 of what this phone saved lately – sent to the PC so it knows the phone has them. */
+    @Synchronized fun recentShas(): List<String> {
         val since = LocalDateTime.now().minusDays(10).toString()
-        return list().filter { it.id > 0 && it.savedAt >= since }.map { it.id }.take(40)
+        return list().filter { it.id > 0 && it.sha.length == 64 && it.savedAt >= since }.map { it.sha }.take(40)
     }
 
     @Synchronized fun setError(msg: String) {
@@ -230,7 +231,7 @@ class Backups(private val dir: File, val sink: BackupSink, private val drive: Dr
         val uri = sink.save(name, kind == "REPORT", tmp)
         val item = BackupItem(meta.lng("id"), kind, name, tmp.length(), meta.str("sha"), meta.str("date"),
             meta.str("created"), uri, now())
-        val items = list().filter { it.id != item.id || item.id <= 0 }.toMutableList()
+        val items = list().filter { it.uri != uri && it.sha != item.sha }.toMutableList()
         items += item
         putList(items)
         data.put("last_saved", item.savedAt).put("error", "")

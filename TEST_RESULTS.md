@@ -1,6 +1,6 @@
 # Test results – SDJ Mobile Care
 
-**Result: 87 passed in 111.38s** · run on 19 Nov 2026 · Python 3.13.18 · PySide6 6.12.0 · SQLAlchemy 2.1.9 · ReportLab 5.0.1 · Matplotlib 3.11.2 · OpenPyXL 3.1.5
+**Result: 102 passed, 1 skipped (Windows-only firewall test) in 147s locally · 103 passed on the GitHub Windows runner** · run on 20 Nov 2026 · Python 3.13 · PySide6 6.12 · SQLAlchemy 2.1 · ReportLab 5.0 · Matplotlib 3.11 · OpenPyXL 3.1
 
 Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 
@@ -158,5 +158,7 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `CalcTest` | 400 bills computed by the PC code give the same paise on the phone (GST incl. / excl., discounts, round off, amount in words) |
 | ✅ PASSED | `CryptoTest` | PC password hashes, the pairing key and encrypted envelopes work in both directions (Tamil text too) |
 | ✅ PASSED | `RepoTest` | Offline bills, edit, cancel, expense, dues payment and a repair job update stock, dues and today's figures; the sync request holds every entry once |
-| ✅ PASSED | `ScreensTest` | All 15 phone screens are drawn with the sample shop |
+| ✅ PASSED | `ScreensTest` | All 17 phone screens are drawn with the sample shop (incl. Backups, and Backups before linking) |
+| ✅ PASSED | `BackupLogicTest` | Keep rule (30 days + one per month); closing backup + report arrive with the sync, are checked by SHA-256, saved in Downloads → SDJ Backups and confirmed to the PC; Google Drive copy waits for Wi-Fi; a damaged download is not kept; entries are re-sent once after a PC restore; Send to PC and the emergency shop copy use the restore code |
+| ✅ PASSED | `LiveLinkTest` | Against the real PC service: link, sign in, 7 offline entries synced, the PC's locked backup downloaded and sent back as to a new PC; the emergency rebuild is refused on a PC that has data |
 | ✅ PASSED | `check_phone_ops.py` | The PC code replays the phone's sync request and accepts all 7 entries with exactly the same totals |

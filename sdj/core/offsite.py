@@ -601,15 +601,18 @@ def items_for_device(s, dev: SyncDevice, role: str) -> list[dict]:
     return [_item_dict(r) for r in sorted(out, key=lambda x: x.id) if (outbox_dir() / r.name).exists()][:12]
 
 
-def mark_delivered(s, device_id: int, ids) -> int:
+def mark_delivered(s, device_id: int, shas) -> int:
+    """The phone lists the SHA-256 of the backups / reports it has saved (numbers would not survive a restore of the
+    PC: a new PC numbers its backups again from where the restored data left off)."""
+    want = {str(x).lower() for x in (shas or []) if isinstance(x, str) and len(x) == 64}
+    if not want:
+        return 0
     n = 0
-    for i in {int(x) for x in (ids or []) if str(x).isdigit()}:
-        if s.get(OffsiteItem, i) is None:
-            continue
-        exists = s.scalar(select(OffsiteDelivery.id).where(OffsiteDelivery.item_id == i,
+    for item in s.scalars(select(OffsiteItem).where(OffsiteItem.sha256.in_(want))):
+        exists = s.scalar(select(OffsiteDelivery.id).where(OffsiteDelivery.item_id == item.id,
                                                            OffsiteDelivery.device_id == device_id))
         if exists is None:
-            s.add(OffsiteDelivery(item_id=i, device_id=device_id))
+            s.add(OffsiteDelivery(item_id=item.id, device_id=device_id))
             n += 1
     return n
 

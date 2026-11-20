@@ -232,7 +232,7 @@ def test_closing_backup_and_report_reach_the_owner_phone(shop):
         assert hashlib.sha256(data).hexdigest() == b["sha"] == item["sha"]
         got[b["kind"]] = data
     assert got["BACKUP"].startswith(offsite.MAGIC) and got["REPORT"].startswith(b"%PDF")
-    ans = phone.sync(acks=[b["id"] for b in ans["backups"]])
+    ans = phone.sync(acks=[b["sha"] for b in ans["backups"]])
     assert ans["backups"] == []
     st = offsite.status()
     assert st["phone_last"] is not None and not st["late"]
@@ -277,8 +277,11 @@ def test_backup_download_over_the_network(shop):
 def test_new_pc_restores_the_backup_sent_from_the_phone(shop, tmp_path, monkeypatch):
     phone = shop["phone"]
     closing.close_day(date.today(), Decimal("0"))
-    item = next(b for b in phone.sync()["backups"] if b["kind"] == "BACKUP")
+    offered = phone.sync()["backups"]
+    item = next(b for b in offered if b["kind"] == "BACKUP")
     blob = Path(phonesync.handle_backup(phone.backup_request(item["id"]), "127.0.0.1")["path"]).read_bytes()
+    saved_shas = [b["sha"] for b in offered]
+    assert phone.sync(acks=saved_shas)["backups"] == []
     old_epoch, old_pc = phone.epoch, phonesync.pc_identity()
     late_op = phone.bill([dict(p=shop["charger"], q=1, price=40000)], {"CASH": 40000})
     assert phone.sync([late_op])["results"][0]["st"] == "DONE"        # saved on the old PC after the backup
@@ -319,6 +322,11 @@ def test_new_pc_restores_the_backup_sent_from_the_phone(shop, tmp_path, monkeypa
     again = phone.sync([late_op])["results"][0]                        # the entry made after the backup comes back
     assert again["st"] == "DONE"
     assert any(s["invoice_no"] == again["res"]["no"] for s in sales.list_sales())
+    # the new PC's own next backup reaches the phone, although its numbering started again from the restored data
+    auth.set_current_user(auth.authenticate("admin", "admin123"))
+    new_bundle = offsite.create_bundle("manual")
+    offered = phone.sync(acks=saved_shas)["backups"]
+    assert [b["name"] for b in offered if b["kind"] == "BACKUP"] == [new_bundle["name"]]
 
 
 def test_rebuild_needs_a_waiting_restore_code(db):

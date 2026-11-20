@@ -87,7 +87,7 @@ class ScreensTest {
         fun save(id: Long, kind: String, name: String, created: String) {
             val f = File(work, "f$id")
             f.writeBytes(if (kind == "REPORT") "%PDF-1.4".toByteArray() else "SDJB1\n".toByteArray() + ByteArray(180_000))
-            r.backups.saveDownloaded(JSONObject().put("id", id).put("kind", kind).put("name", name).put("sha", "x")
+            r.backups.saveDownloaded(JSONObject().put("id", id).put("kind", kind).put("name", name).put("sha", "sha$id")
                 .put("date", created.take(10)).put("created", created), f)
         }
         save(1, "BACKUP", "SDJ_Mobile_Care_2026-11-18_210500_closing.sdjb", "2026-11-18T21:05:00")
