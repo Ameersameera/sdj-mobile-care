@@ -54,11 +54,11 @@ class LiveLinkTest {
         assertEquals("SDJB1\n", String(head, Charsets.ISO_8859_1))
         assertTrue(r.backups.state.value.error.isEmpty())
         // ... and goes back to a PC that shows "Restore from phone" (the test service shows a restore code)
-        val qr = r.parseRestoreQr("SDJRESTORE:1;h=127.0.0.1;p=${live.getInt("port")};c=${live.getString("restore")};" +
+        val rq = r.parseRestoreQr("SDJRESTORE:1;h=127.0.0.1;p=${live.getInt("port")};c=${live.getString("restore")};" +
             "id=${live.getString("pc")};n=Test shop")!!
-        r.sendToPc(backup, qr, "CI phone")
+        r.sendToPc(backup, rq, "CI phone")
         try {
-            r.rebuildPc(qr, "CI phone")
+            r.rebuildPc(rq, "CI phone")
             fail("an emergency rebuild must be refused on a PC that has shop data")
         } catch (e: UserError) {
             assertTrue(e.message!!, e.message!!.contains("already has shop data"))
