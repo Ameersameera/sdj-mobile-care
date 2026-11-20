@@ -170,6 +170,12 @@ fun BackupsScreen(ui: Ui, st: UiState, standalone: Boolean = false) {
     val owner = st.user?.role == "ADMIN"
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (standalone) Section("Restore a new PC") {
+            Text("1. Tap 'Add a backup file' below and pick the backup (.sdjb) – from Google Drive or Downloads → SDJ Backups.\n" +
+                "2. On the new PC choose 'Restore from phone' – it shows a QR code.\n" +
+                "3. Tap 'Send to PC' on the backup and scan that QR. The PC asks for the owner's password (or the " +
+                "recovery code).", fontSize = 14.sp)
+        }
         Section("Backups on this phone") {
             Text("After every daily closing the PC sends a locked backup and the closing report to this phone over the " +
                 "shop Wi-Fi. They are saved in ${bs.place} and stay even if this app is removed.", color = Muted, fontSize = 13.sp)

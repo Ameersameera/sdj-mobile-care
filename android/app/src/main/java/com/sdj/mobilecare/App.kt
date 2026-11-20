@@ -25,6 +25,7 @@ class App : Application() {
             backups = Backups(filesDir, DownloadsSink(this), SafDrive(this)) { net.unmetered() })
         repo.onNewEntry = { scope.launch { repo.syncOnce() } }
         scope.launch { repo.load() }
+        runCatching { SyncWorker.start(this) }          // background sync on Wi-Fi (closing backups arrive by themselves)
     }
 
     companion object {
