@@ -25,6 +25,10 @@ def run_self_test() -> int:
         from . import APP_VERSION, config
         config.set_data_dir(tmp)
         ok(f"SDJ Mobile Care {APP_VERSION}; assets at {config.asset_path()}")
+        from .core import updater
+        assert updater.is_newer("99.0.0") and not updater.is_newer(APP_VERSION), "update checker"
+        assert "/SILENT" in updater.install_command(Path("Setup.exe")), "update installer command"
+        ok("in-app update checker present")
         for name in ("logo.png", "app.ico", "fonts/DejaVuSans.ttf", "icons/layout-dashboard.svg"):
             if not config.asset_path(*name.split("/")).exists():
                 raise RuntimeError(f"missing asset {name}")

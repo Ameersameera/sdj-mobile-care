@@ -2,5 +2,6 @@
 <paths>
     <cache-path name="bills" path="bills/" />
     <files-path name="backups" path="backup-files/" />
+    <files-path name="updates" path="update/" />
     <external-path name="sdj_backups" path="Download/SDJ Backups/" />
 </paths>

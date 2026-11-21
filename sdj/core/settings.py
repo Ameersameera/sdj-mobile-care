@@ -61,6 +61,11 @@ DEFAULTS: dict[str, Any] = {
     "backup_dir": "",
     "backup_keep": 30,
     "last_backup_at": "",
+    # updates (GitHub releases)
+    "update_auto_check": True,
+    "update_last_check": "",
+    "update_skip_version": "",
+    "phone_apk": {},
     # ui
     "theme": "light",
     "expense_categories": EXPENSE_CATEGORIES,

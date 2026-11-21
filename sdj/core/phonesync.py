@@ -1048,6 +1048,9 @@ def handle_sync(env: dict, ip: str = "") -> dict:
         token = data_token()
         answer = dict(seq=int(req.get("seq") or 0), results=results, token=token, time=_now().isoformat(),
                       backups=backups, epoch=epoch)
+        update = _phone_update_for(str(req.get("app") or ""))
+        if update:
+            answer["update"] = update
         if req.get("token") != token or req.get("full"):
             built = build_data(dev, token)
             have = req.get("hashes") or {}
@@ -1061,6 +1064,31 @@ def handle_sync(env: dict, ip: str = "") -> dict:
     else:
         _emit("seen", name=dev.name)
     return seal(key, answer, aad)
+
+
+def _phone_update_for(app_version: str) -> dict | None:
+    """The phone app copy this PC keeps, when it is newer than the phone's own version."""
+    try:
+        from . import updater
+        apk = updater.staged_phone_apk()
+        if apk and app_version and updater.is_newer(apk["version"], app_version):
+            return dict(version=apk["version"], size=apk["size"], sha=apk["sha"], name=apk["name"])
+    except Exception:
+        log.exception("phone update offer failed")
+    return None
+
+
+def handle_apk(env: dict, ip: str = "") -> dict:
+    """A linked phone downloads the newer phone app kept on this PC (a public, signed APK). Returns the file to stream."""
+    from . import updater
+    dev, key = _device_for(env)
+    req = unseal(key, env, dev.device_uid.encode() + b"|apk")
+    with _sync_lock:
+        _note_request(dev, int(req.get("seq") or 0), ip, str(req.get("app") or ""), False)
+    apk = updater.staged_phone_apk()
+    if apk is None:
+        raise SyncError("The PC has no newer phone app to give right now.", "no_update", 404)
+    return dict(path=apk["path"], sha=apk["sha"], name=apk["name"])
 
 
 def _maybe_backup() -> None:

@@ -3,7 +3,7 @@
 ; Shop data lives in %LOCALAPPDATA%\SDJ Mobile Care – uninstalling the app never deletes it.
 
 #define MyAppName "SDJ Mobile Care"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.5.0"
 #define MyAppExeName "SDJMobileCare.exe"
 
 [Setup]
@@ -27,6 +27,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 MinVersion=10.0
+; In-app update: the running program is closed, replaced, and (with /UPDATE=1) opened again.
+CloseApplications=yes
+RestartApplications=no
+UsePreviousTasks=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -53,8 +57,15 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""S
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""SDJ Mobile Care phone sync (TCP 47810)"" dir=in action=allow protocol=TCP localport=47810 enable=yes profile=any"; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""SDJ Mobile Care phone sync (UDP 47811)"" dir=in action=allow protocol=UDP localport=47811 enable=yes profile=any"; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch SDJ Mobile Care"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent runasoriginaluser; Check: IsUpdateRun
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""SDJ Mobile Care phone sync"""; Flags: runhidden; RunOnceId: "SDJFirewall"; Check: IsAdminInstallMode
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""SDJ Mobile Care phone sync (TCP 47810)"""; Flags: runhidden; RunOnceId: "SDJFirewallTcp"; Check: IsAdminInstallMode
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""SDJ Mobile Care phone sync (UDP 47811)"""; Flags: runhidden; RunOnceId: "SDJFirewallUdp"; Check: IsAdminInstallMode
+
+[Code]
+function IsUpdateRun: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;

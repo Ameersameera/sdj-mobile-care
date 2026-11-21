@@ -102,6 +102,9 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     private val syncMutex = Mutex()
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
+    private val _update = MutableStateFlow<AppUpdate?>(null)
+    /** A newer phone app that the PC offered (and this phone has downloaded from it over the shop Wi-Fi). */
+    val update: StateFlow<AppUpdate?> = _update
 
     private var shop: Shop? = null
     private var categories = emptyList<Category>()
@@ -786,6 +789,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
             val ans = withContext(io) { Crypto.unseal(key, postToPc(env), device.toByteArray()) }
             mutex.withLock { withContext(io) { applyAnswer(ans, sentIds) } }
             fetchBackups(ans.optJSONArray("backups"), device, key)
+            offerUpdate(ans.optJSONObject("update"), device, key)
             true
         } catch (e: PcError) {
             mutex.withLock {
@@ -953,13 +957,57 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         }
     }
 
-    private fun downloadFromPc(env: JSONObject, dest: File): String {
+    /** The PC says a newer phone app is waiting: download it (Wi-Fi to the PC, no internet) and keep it ready to install. */
+    suspend fun offerUpdate(meta: JSONObject?, device: String, key: ByteArray) {
+        val dir = File(store.dir, "update")
+        val ver = meta?.str("version").orEmpty()
+        val sha = meta?.str("sha").orEmpty().lowercase()
+        val size = meta?.lng("size") ?: 0L
+        if (meta == null || !isNewerVersion(ver, appVersion) || sha.length != 64 || size !in 1..MAX_APK) {
+            if (_update.value != null) _update.value = null
+            withContext(io) { dir.listFiles()?.forEach { it.delete() } }       // installed already: tidy up
+            return
+        }
+        val dest = File(dir, "SDJMobileCare-Phone-$ver.apk")
+        val have = withContext(io) { dest.exists() && dest.inputStream().use { Backups.sha256(it).second } == sha }
+        if (have) {
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath)
+            return
+        }
+        _update.value = AppUpdate(ver, size, sha, AppUpdate.LOADING)
+        val tmp = File(dir.apply { mkdirs() }, "apk.part")
+        try {
+            val seq = mutex.withLock {
+                val n = cfg.optLong("seq", 0) + 1
+                cfg.put("seq", n)
+                store.saveConfig()
+                n
+            }
+            val env = Crypto.seal(key, JSONObject().put("seq", seq).put("app", appVersion), "$device|apk".toByteArray()).put("d", device)
+            val got = withContext(io) { downloadFromPc(env, tmp, "/sdj/apk") }
+            if (got != sha) throw IOException("the update file did not arrive complete")
+            withContext(io) {
+                dir.listFiles()?.forEach { if (it != tmp) it.delete() }
+                if (!tmp.renameTo(dest)) throw IOException("the update file could not be saved")
+            }
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath)
+        } catch (e: PcError) {
+            if (e.code == "replay") mutex.withLock { cfg.put("seq", cfg.optLong("seq", 0) + 1000); store.saveConfig() }
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = e.message ?: "The PC did not send the update.")
+        } catch (e: Exception) {
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = "Update not downloaded yet (${e.message}) – it is tried again at the next sync.")
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private fun downloadFromPc(env: JSONObject, dest: File, path: String = "/sdj/backup"): String {
         val port = cfg.optInt("port", Net.PORT)
         val hosts = (listOf(cfg.str("last_host")) + cfg.arr("hosts").strings()).filter { it.isNotBlank() }.distinct()
         var last: IOException? = null
         for (h in hosts) {
             try {
-                return net.download(h, port, "/sdj/backup", env, dest)
+                return net.download(h, port, path, env, dest)
             } catch (e: IOException) {
                 last = e
             }

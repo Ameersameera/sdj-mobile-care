@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
                                QLabel, QLineEdit, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
@@ -751,9 +751,34 @@ class SettingsPage(Page):
                     f"Logs: {config.logs_dir()}", "", wrap=True))
         c.add(hbox(button("Open documents folder", "", "download", lambda: open_folder(config.documents_root())),
                    button("Open data folder", "ghost", None, lambda: open_folder(config.db_dir())), None))
+        self._updates_card()
         c.add(label("Icons: Lucide (ISC licence). Fonts: DejaVu (free licence). Built with Python, PySide6, SQLAlchemy, "
                     "ReportLab, Matplotlib and OpenPyXL.", "Muted", wrap=True))
-        self._add("about", _tab(c), "About")
+        self._add("about", _tab(c, self.update_card), "About")
+
+    def _updates_card(self):
+        u = Card("Updates", "New versions come from GitHub. Needs internet on this PC.")
+        self.update_card = u
+        self.update_status = label("", "Muted", wrap=True)
+        u.add(self.update_status)
+        self.update_auto = QCheckBox("Check for updates automatically (when the program opens)")
+        self.update_auto.setChecked(bool(settings.get("update_auto_check")))
+        self.update_auto.toggled.connect(lambda on: settings.set_value("update_auto_check", bool(on)))
+        u.add(self.update_auto)
+        u.add(hbox(button("Check for updates", "primary", "download", self.check_updates), None))
+        self._show_update_status()
+
+    def _show_update_status(self):
+        from ...core.updater import can_self_install
+        last = settings.get("update_last_check") or ""
+        when_ = dt(last) if last else "never"
+        extra = "" if can_self_install() else "\n(This copy cannot install updates by itself; it will open the download page.)"
+        self.update_status.setText(f"You have version {APP_VERSION}. Last checked: {when_}.{extra}")
+
+    def check_updates(self):
+        from .. import update_ui
+        update_ui.check_now(self)
+        QTimer.singleShot(4000, self._show_update_status)
 
     # ------------------------------------------------------------ refresh
     def refresh(self):

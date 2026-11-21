@@ -165,6 +165,11 @@ def run(argv: list[str] | None = None) -> int:
         win.logout_requested.connect(on_logout)
         state["win"] = win
         win.showMaximized()
+        try:
+            from .update_ui import start_background_check
+            start_background_check(win)
+        except Exception:
+            log.exception("update check could not start")
 
     def on_logout():
         win = state["win"]
