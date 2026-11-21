@@ -3,7 +3,6 @@ package com.sdj.mobilecare.data
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -114,7 +113,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     private val filesMutex = Mutex()
     private val updateMutex = Mutex()
     private val bg = CoroutineScope(SupervisorJob() + io)
-    private var filesJob: Job? = null
+    private var filesJob: kotlinx.coroutines.Job? = null      // (Job alone is a repair job here)
     private val nudges = Channel<Unit>(Channel.CONFLATED)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
