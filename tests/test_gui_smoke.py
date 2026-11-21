@@ -563,3 +563,42 @@ def test_new_pc_first_screen_restores_from_phone_or_file(db, qapp, make_product,
     wiz3 = SetupWizard()
     wiz3.stack.setCurrentIndex(1)
     assert wiz3.username.text() == "admin"
+
+
+def test_update_popup_and_settings_check(gui, tmp_path, monkeypatch):
+    """Settings → About has Check for updates; a new release shows the popup with what's new; nothing installs in tests."""
+    win, msgs, app = gui
+    from sdj.core import updater
+    from sdj.ui import update_ui
+    from sdj.ui.pages.settings_page import SettingsPage
+
+    latest = dict(version="9.9.9", tag="v9.9.9", notes="Update from inside the app", page="https://github.com/x/y",
+                  setup=dict(name="SDJMobileCare_Setup_9.9.9.exe", url="https://github.com/x", size=1, sha="a" * 64), apk=None)
+    page = SettingsPage()
+    page.tabs.setCurrentIndex(page.tab_index["about"])
+    assert page.update_auto.isChecked()
+    page.update_auto.setChecked(False)
+    assert settings.get("update_auto_check") is False
+    assert "Last checked" in page.update_status.text()
+
+    # popup content
+    dlg = update_ui.UpdateDialog(latest)
+    from PySide6.QtWidgets import QTextBrowser
+    assert "inside the app" in dlg.findChild(QTextBrowser).toPlainText()
+    assert not updater.can_self_install()
+    assert dlg.go_btn.text() == "Open download page"
+
+    # manual check: up to date / offline / new
+    ctl = update_ui.UpdateController(win)
+    ctl._on_checked(dict(state="current", latest=latest), True)
+    ctl._on_checked(dict(state="offline", latest=None), True)
+    assert [m for m in msgs if m[0] == "information"].__len__() == 2
+    shown = []
+    monkeypatch.setattr(update_ui.UpdateDialog, "exec", lambda self: shown.append(self.latest["version"]) or 0)
+    ctl._on_checked(dict(state="new", latest=latest), False)
+    assert shown == ["9.9.9"]
+    settings.set_value("update_skip_version", "9.9.9")                # "Skip this version": no quiet popup again…
+    ctl._on_checked(dict(state="new", latest=latest), False)
+    assert shown == ["9.9.9"]
+    ctl._on_checked(dict(state="new", latest=latest), True)           # …but Check for updates still shows it
+    assert shown == ["9.9.9", "9.9.9"]

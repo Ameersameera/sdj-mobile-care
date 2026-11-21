@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Android 8/9 only: backups are saved in Downloads → SDJ Backups (Android 10+ needs no permission for this) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Phone app updates: lets the person open Android's installer for the new version (needs a one-time allow) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application

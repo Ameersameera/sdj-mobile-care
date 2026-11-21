@@ -44,6 +44,26 @@ jobs:
       - name: The PC accepts what the phone sends
         run: python android/tools/check_phone_ops.py android/build/test-out
 
+      - name: Open the app signing key
+        id: key
+        env:
+          PASSPHRASE: ${{ secrets.SDJ_KEYSTORE_PASSPHRASE }}
+        run: |
+          if [ -n "$PASSPHRASE" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:PASSPHRASE \
+              -in android/keystore/sdj-release.jks.enc -out "$RUNNER_TEMP/sdj-release.jks"
+            echo "SDJ_KEYSTORE_PATH=$RUNNER_TEMP/sdj-release.jks" >> "$GITHUB_ENV"
+            echo "SDJ_KEYSTORE_PASSWORD=$PASSPHRASE" >> "$GITHUB_ENV"
+            echo "real=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SDJ_KEYSTORE_PASSPHRASE secret missing - using a throw-away test key (not releasable)"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/tmp.jks" -storetype PKCS12 -alias sdj -keyalg RSA -keysize 2048 \
+              -validity 30 -storepass testtest -keypass testtest -dname "CN=CI test"
+            echo "SDJ_KEYSTORE_PATH=$RUNNER_TEMP/tmp.jks" >> "$GITHUB_ENV"
+            echo "SDJ_KEYSTORE_PASSWORD=testtest" >> "$GITHUB_ENV"
+            echo "real=no" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build the signed APK
         working-directory: android
         run: ./gradlew --no-daemon assembleRelease
@@ -84,6 +104,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${{ steps.key.outputs.real }}" != "yes" ]; then
+            echo "::error::Refusing to release an APK signed with a test key. Add the SDJ_KEYSTORE_PASSPHRASE secret."
+            exit 1
+          fi
           TAG="v${{ steps.apk.outputs.version }}"
           for i in $(seq 1 40); do
             if gh release view "$TAG" >/dev/null 2>&1; then

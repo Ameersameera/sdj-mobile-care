@@ -68,6 +68,7 @@ fun HomeScreen(ui: Ui, st: UiState, nav: Nav) {
     val u = st.user
     val bs by ui.repo.backups.state.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        UpdateBanner(ui)
         SyncSummary(st) { nav.go(Route.Sync) }
         if (u?.role == "ADMIN" || bs.items.isNotEmpty()) {
             val (line, ok) = backupLine(bs)
@@ -310,6 +311,7 @@ fun ExpensesScreen(ui: Ui, st: UiState) {
 fun SyncScreen(ui: Ui, st: UiState) {
     var unlink by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        UpdateBanner(ui)
         SyncSummary(st) {}
         Section("This phone") {
             Row2("Shop PC", st.pcShopName)

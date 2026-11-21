@@ -204,6 +204,19 @@ If the PC (and its disk) is lost, the shop's data comes back from a copy kept so
   the app offers to restore the most recent good backup automatically.
 * Command line check: `python scripts/init_database.py --check`.
 
+### Updates from inside the app (v1.5)
+* **PC**: when the program opens it asks GitHub (`api.github.com/repos/<owner>/<repo>/releases/latest`, at most every
+  12 hours; *Settings → About* can switch it off or check now). A newer release shows a popup with the release notes.
+  *Update now* downloads `SDJMobileCare_Setup_<version>.exe` from github.com only, verifies its SHA-256 (GitHub's own
+  digest), saves a backup, runs the installer silently (`/SILENT /CLOSEAPPLICATIONS /UPDATE=1`) and the new version opens
+  by itself. The shop database lives in `%LOCALAPPDATA%\SDJ Mobile Care`, outside the program folder, and is never touched.
+* **Phone**: the PC keeps the phone app (APK) that matches its own version in its `updates` folder. A linked phone is told
+  about it in the sync answer and downloads it from the PC over the shop Wi-Fi (`/sdj/apk`, encrypted request, SHA-256
+  checked). *Update ready* → *Update now* opens Android's installer. Android needs one tap, and a one-time
+  *Install unknown apps* permission. An update only installs over the old app when signed with the same key.
+* **Signing key**: only the AES-encrypted key (`android/keystore/sdj-release.jks.enc`) is in the repository. The passphrase
+  is the GitHub secret `SDJ_KEYSTORE_PASSPHRASE`; CI refuses to publish a phone app signed without it.
+
 ---
 
 ## 6. Printing
@@ -230,8 +243,8 @@ If the PC (and its disk) is lost, the shop's data comes back from a copy kept so
 3. Open *Actions → Build Windows app → latest run* and download **SDJMobileCare-Windows-installer** (setup .exe) or
    **SDJMobileCare-Windows-app** (portable folder). These run downloads expire after 90 days.
 4. Every successful build also publishes the installer and a portable zip on the **Releases** page as
-   `v<version>` (permanent download). For a new version, change `MyAppVersion` in `installer/sdj_mobile_care.iss`
-   and `APP_VERSION` in `sdj/__init__.py`; a build of the same version just refreshes the files.
+   `v<version>` (permanent download). For a new version, change `MyAppVersion` in `installer/sdj_mobile_care.iss`,
+   `installer/version_info.txt` and `APP_VERSION` in `sdj/__init__.py`; installed copies then offer the update themselves; a build of the same version just refreshes the files.
 
 **Portable mode:** put an empty file named `portable.flag` next to `SDJMobileCare.exe` and all data is kept beside the
 app (e.g. on a USB drive) instead of in the user profile.

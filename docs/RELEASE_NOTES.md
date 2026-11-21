@@ -3,6 +3,26 @@
 Offline shop software for Windows 10 / 11 (64-bit) and Android: billing, quick sale, stock, purchases, repair jobs,
 customers & dues, expenses, returns, daily closing, reports and accounting.
 
+### What's new in 1.5.0 – update from inside the app
+- **PC** – when the program opens (internet needed), it checks GitHub for a newer version. A popup shows *what's new*
+  with **Update now / Later / Skip this version**. *Update now* downloads the new version, checks it is untouched
+  (SHA-256), saves a safety backup, installs it and opens the program again. Your shop data is never touched.
+  Also: **Settings → About → Check for updates** (and a tick to switch the automatic check off).
+- **Phone** – after the PC is updated it keeps a copy of the matching phone app. Linked phones get it over the shop
+  Wi-Fi at the next sync (the phone needs no internet). An **Update ready** card appears on the Home screen; tap
+  **Update now**, then **Install**. Android does not allow silent updates, so this one tap is needed. First time only:
+  allow *Install unknown apps* for SDJ Mobile Care.
+- **Safer phone app key** – the phone app's signing key is no longer readable in the public repository. Because the key
+  changed, **this one time the old phone app must be uninstalled before installing 1.5.0** (see below).
+
+### 1.4.0 → 1.5.0: one-time steps (Tanglish)
+1. **Phone (munnaadi):** Wi-Fi-la app open panni **Sync now** → entries ellam PC-ku pogum. (Optional: Downloads → SDJ Backups
+   folder-ai copy pannunga.)
+2. **PC:** `SDJMobileCare_Setup_1.5.0.exe` run pannunga – pazhaya version mela install aagum, **delete venaam**, data appadiye.
+3. **Phone:** pazhaya SDJ Mobile Care-ai **uninstall** pannunga → `SDJMobileCare-Phone-1.5.0.apk` install → PC-la
+   **Settings → Phone link → Create code** → phone-la QR scan. Data PC-la irundhu thirumba varum.
+4. Idhukku appuram ellaa update-um app-kulla thaan: PC popup / phone "Update ready".
+
 ### What's new in 1.4.0 – backups that survive a dead PC
 - **Backup to the owner's phone** – after every *Close Day* the PC makes a locked backup (data + shop logo + closing
   report) and sends it to the linked phone over the shop Wi-Fi at the next sync. The phone saves it in
@@ -21,13 +41,13 @@ customers & dues, expenses, returns, daily closing, reports and accounting.
 - Dashboard shows where the last backup is; **Backup late** warning after 2 days (phone) / 7 days (2nd folder).
 
 ### Download
-- **SDJMobileCare_Setup_1.4.0.exe** – Windows installer (recommended)
-- **SDJMobileCare-Windows-app-v1.4.0.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
-- **SDJMobileCare-Phone-1.4.0.apk** – Android phone app (Android 8 or newer)
+- **SDJMobileCare_Setup_1.5.0.exe** – Windows installer (recommended)
+- **SDJMobileCare-Windows-app-v1.5.0.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
+- **SDJMobileCare-Phone-1.5.0.apk** – Android phone app (Android 8 or newer)
 
 ### PC + phone update pannradhu eppadi
-1. PC: `SDJMobileCare_Setup_1.4.0.exe` download panni run pannunga (app-ai close pannitu). Data appadiye irukkum.
-2. Phone: `SDJMobileCare-Phone-1.4.0.apk` install pannunga (pazhaya app mela update aagum, link-um data-vum irukkum).
+1. PC: `SDJMobileCare_Setup_1.5.0.exe` download panni run pannunga (app-ai close pannitu). Data appadiye irukkum.
+2. Phone: `SDJMobileCare-Phone-1.5.0.apk` install pannunga (first time key maariyadhaala pazhaya app-ai uninstall pannanum – mela paarunga).
 
 ### Backup setup – once (5 nimisham)
 1. PC: **Settings → Backup → Create recovery code…** → password → code-ai **Print** panni safe-aa vechukonga

@@ -2,7 +2,7 @@
 
 * TCP 47810 – HTTP with encrypted JSON bodies: /sdj/hello, /sdj/pair, /sdj/sync, plus backups:
   /sdj/backup (a linked phone downloads a backup), /sdj/restore (a phone sends a backup to a new PC),
-  /sdj/rebuild (emergency: a phone sends its shop copy to a new PC)
+  /sdj/apk (a linked phone downloads the newer phone app), /sdj/rebuild (emergency: a phone sends its shop copy to a new PC)
 * UDP 47811 – "where is the PC?" broadcast from a phone; the PC answers with its name and port
 """
 from __future__ import annotations
@@ -100,6 +100,9 @@ class _Handler(BaseHTTPRequestHandler):
                 out = phonesync.handle_sync(env, ip)
             elif path == "/sdj/backup":
                 self._send_file(phonesync.handle_backup(env, ip))
+                return
+            elif path == "/sdj/apk":
+                self._send_file(phonesync.handle_apk(env, ip))
                 return
             elif path == "/sdj/rebuild":
                 out = phonesync.handle_rebuild(env, ip)
