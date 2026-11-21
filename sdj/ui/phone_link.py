@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
                                QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from ..core import auth, phonesync, syncserver, winfirewall
+from ..core import auth, phonesync, settings, syncserver, winfirewall
 from ..output.fmt import dt
 from .bus import bus, changed, toast
 from .widgets import Card, Col, DataTable, button, confirm, error, hbox, label, run_safely, scroll_wrap
@@ -112,11 +112,40 @@ def autostart_enabled() -> bool:
         return False
 
 
+def autostart_command() -> str:
+    """Started by Windows: open quietly in the background (tray icon) – phones can sync without anyone signing in."""
+    return f'"{sys.executable}" --background'
+
+
+def fix_autostart_flag() -> None:
+    """v1.5.2: start with Windows (in the background) is on unless the owner turned it off; copies made before v1.5.2
+    started with the sign-in window – now Windows starts them quietly in the background."""
+    if not autostart_supported():
+        return
+    from ..core import settings as _settings
+    try:
+        if not _settings.get("autostart_decided"):
+            _settings.set_value("autostart_decided", True)
+            if not autostart_enabled():
+                set_autostart(True)
+                return
+    except OSError:
+        log.exception("could not switch on start with Windows")
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as k:
+            value, _ = winreg.QueryValueEx(k, RUN_NAME)
+            if "--background" not in str(value):
+                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, autostart_command())
+    except OSError:
+        pass                                    # not switched on
+
+
 def set_autostart(on: bool) -> None:
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if on:
-            winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, f'"{sys.executable}"')
+            winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, autostart_command())
         else:
             try:
                 winreg.DeleteValue(k, RUN_NAME)
@@ -334,6 +363,13 @@ class PhoneLinkTab(QWidget):
         self.autostart.setChecked(autostart_enabled())
         self.autostart.toggled.connect(self._toggle_autostart)
         st.add(self.autostart)
+        from .tray import available as tray_available
+        self.background = QCheckBox("Keep running in the background when the window is closed (tray icon): phones "
+                                    "keep syncing, automatic backups and update notices continue")
+        self.background.setVisible(tray_available())
+        self.background.setChecked(bool(settings.get("run_in_background")))
+        self.background.toggled.connect(lambda on: settings.set_value("run_in_background", bool(on)))
+        st.add(self.background)
         lay.addWidget(st)
 
         lk = Card("Link a new phone", "one-time code · valid 10 minutes")
@@ -524,6 +560,7 @@ class PhoneLinkTab(QWidget):
 
     def _toggle_autostart(self, on: bool) -> None:
         try:
+            settings.set_value("autostart_decided", True)
             set_autostart(on)
             toast("SDJ Mobile Care will start with Windows" if on else "Start with Windows turned off")
         except OSError as exc:

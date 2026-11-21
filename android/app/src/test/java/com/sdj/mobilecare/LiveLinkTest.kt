@@ -47,6 +47,10 @@ class LiveLinkTest {
         assertEquals(0, after.failed.size)
         assertTrue(after.sales.any { !it.pending && it.no.startsWith(st.shop!!.invSeries) })
         assertTrue(r.syncOnce())                     // nothing new: quick, nothing breaks
+        r.awaitFiles()                               // backups download after the sync, not inside it
+        // live sync: the PC holds the request and answers when its data changes (here: quiet after 1 second)
+        val w = r.waitForChange(1)
+        assertTrue("live wait answered: $w", w == Repo.Wait.QUIET || w == Repo.Wait.CHANGED)
         // the PC's locked backup came with the sync and is kept on the phone
         val backup = r.backups.state.value.items.firstOrNull { !it.isReport }
         assertNotNull("the PC's backup reached the phone", backup)

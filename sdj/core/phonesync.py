@@ -20,6 +20,7 @@ import secrets
 import socket
 import sqlite3
 import threading
+import time
 import uuid
 import zlib
 from contextlib import nullcontext
@@ -49,6 +50,7 @@ log = logging.getLogger(__name__)
 PROTOCOL = 1
 PORT = 47810
 DISCOVERY_PORT = 47811
+ANNOUNCE_PORT = 47812            # the PC tells phones "I just started" here, so they sync at once
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 CODE_LEN = 10
 CODE_MINUTES = 10
@@ -1064,6 +1066,58 @@ def handle_sync(env: dict, ip: str = "") -> dict:
     else:
         _emit("seen", name=dev.name)
     return seal(key, answer, aad)
+
+
+# ================================================================ live sync: "tell me when something changes"
+WAIT_MAX = 25.0
+_wait_slots = threading.BoundedSemaphore(12)      # at most this many phones wait at the same time
+_waiters_stop = threading.Event()                 # set while the service stops, so waiting phones get an answer
+
+
+def wake_waiters(stopping: bool) -> None:
+    if stopping:
+        _waiters_stop.set()
+    else:
+        _waiters_stop.clear()
+
+
+def handle_wait(env: dict, ip: str = "") -> dict:
+    """A linked phone with the app on screen waits here. The answer comes as soon as the PC's data changes (or after
+    about 25 seconds), then the phone syncs. Nothing is changed by this request, so it has no sequence number."""
+    dev, key = _device_for(env)
+    aad = dev.device_uid.encode() + b"|wait"
+    req = unseal(key, env, aad)
+    have = str(req.get("token") or "")
+    try:
+        limit = min(max(float(req.get("wait") or WAIT_MAX), 0.0), WAIT_MAX)
+    except (TypeError, ValueError):
+        limit = WAIT_MAX
+    changed = False
+    if _wait_slots.acquire(blocking=False):
+        try:
+            end = time.monotonic() + limit
+            while True:
+                if data_token() != have:
+                    changed = True
+                    break
+                left = end - time.monotonic()
+                if left <= 0 or _waiters_stop.is_set():
+                    break
+                _waiters_stop.wait(min(0.3, left))
+        finally:
+            _wait_slots.release()
+    else:                                           # too many waiting: answer now, the phone asks again
+        changed = data_token() != have
+    return seal(key, dict(changed=changed, token=data_token()), aad)
+
+
+def announce_targets() -> list[str]:
+    """Where to say "the PC started": the last address of every linked phone (seen in the last 7 days)."""
+    since = _now() - timedelta(days=7)
+    with session_scope() as s:
+        ips = [ip for (ip,) in s.execute(select(SyncDevice.last_ip).where(SyncDevice.status == "ACTIVE",
+                                                                        SyncDevice.last_seen_at >= since))]
+    return sorted({ip for ip in ips if ip and ip.count(".") == 3})
 
 
 def _phone_update_for(app_version: str) -> dict | None:

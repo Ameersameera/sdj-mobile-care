@@ -239,4 +239,16 @@ class BackupLogicTest {
         assertTrue(req.obj("data").obj("shop").str("pc").isNotEmpty())
         assertTrue(req.obj("data").arr("products").length() > 0)
     }
+
+    @Test
+    fun newestBackupOfEachDayIsKept() {
+        val items = (1..10).flatMap { d ->
+            listOf("09", "13", "21").map { h ->
+                BackupItem(d * 100L + h.toLong(), "BACKUP", "b$d-$h", 1, "", "2026-11-%02d".format(d),
+                    "2026-11-%02dT$h:00:00".format(d), "file:/x/$d-$h", "")
+            }
+        }
+        val keep = Backups.keepSet(items, 5)
+        assertEquals((6..10).map { "file:/x/$it-21" }.toSet(), keep)
+    }
 }

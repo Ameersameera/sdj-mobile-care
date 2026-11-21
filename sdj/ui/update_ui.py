@@ -157,6 +157,9 @@ class UpdateDialog(QDialog):
             self._on_failed(str(exc))
             return
         self.accept()
+        from .tray import life
+        life.updating = True                     # no exit backups: one was saved just now
+        life.quitting = True                     # the window may close even in background mode
         QTimer.singleShot(300, QApplication.quit)
 
     def reject(self):  # noqa: D401
@@ -166,18 +169,63 @@ class UpdateDialog(QDialog):
 
 
 class UpdateController(QObject):
-    """Owns the check (in a thread) and shows the popup on the UI thread."""
+    """Owns the check (in a thread) and shows the popup on the UI thread. Lives for the whole run (also in the tray):
+    checks every 6 hours; when the window is closed it tells the owner with a Windows notification instead."""
 
-    def __init__(self, parent_window=None):
+    def __init__(self, parent_window=None, tray=None):
         super().__init__(parent_window)
         self.window = parent_window
+        self.tray = tray
+        self.pending: dict | None = None          # a newer version found while nobody could see the popup
+        self._notified: set[str] = set()
+        self._whats_new_done = False
         self.bridge = _Bridge(self)
         self.bridge.checked.connect(self._on_checked)
         self.bridge.whats_new.connect(self._show_whats_new)
         self._running = False
 
     def _show_whats_new(self, entry: dict):
-        WhatsNewDialog(entry, self.window).exec()
+        if self.window is not None:
+            WhatsNewDialog(entry, self.window).exec()
+
+    def check_if_due(self) -> None:
+        if updater.should_check_now(hours=6):
+            self.check(False)
+
+    def set_window(self, win) -> None:
+        """The main window opened (win) or closed to the tray (None)."""
+        self.window = win
+        if win is None:
+            return
+        if not self._whats_new_done:            # first window after an update: "What's new" (once)
+            self._whats_new_done = True
+
+            def _wn():
+                try:
+                    e = updater.take_whats_new()
+                    if e:
+                        self.bridge.whats_new.emit(e)
+                except Exception:
+                    log.exception("what's new failed")
+            threading.Thread(target=_wn, daemon=True).start()
+        if self.pending is not None:            # found while the window was closed: offer it now (owner)
+            latest = self.pending
+            QTimer.singleShot(3000, lambda: self._offer(latest, False))
+
+    def _quiet(self, latest: dict) -> bool:
+        return settings.get("update_skip_version") == latest["version"] or updater.snoozed()
+
+    def _offer(self, latest: dict, manual: bool) -> None:
+        if self.window is None:
+            return
+        if not _is_owner():
+            if manual:
+                info(self.window, "Update available",
+                     f"Version {latest['version']} is available. Ask the owner to update the program.")
+            return
+        if not manual and self._quiet(latest):
+            return
+        UpdateDialog(latest, self.window).exec()
 
     def check(self, manual: bool = False) -> None:
         if self._running:
@@ -201,14 +249,13 @@ class UpdateController(QObject):
         self._running = False
         state, latest = res.get("state"), res.get("latest")
         if state == "new" and latest:
-            if not _is_owner():
-                if manual:
-                    info(self.window, "Update available",
-                         f"Version {latest['version']} is available. Ask the owner to update the program.")
-                return
-            if not manual and (settings.get("update_skip_version") == latest["version"] or updater.snoozed()):
-                return
-            UpdateDialog(latest, self.window).exec()
+            self.pending = latest
+            if self.window is not None:
+                self._offer(latest, manual)
+            elif self.tray is not None and latest["version"] not in self._notified and not self._quiet(latest):
+                self._notified.add(latest["version"])     # once per version while it runs in the tray
+                self.tray.notify(f"SDJ Mobile Care {latest['version']} is ready",
+                                 "Click to open SDJ Mobile Care and update. Your shop data stays as it is.")
         elif manual:
             if state == "current":
                 info(self.window, "Up to date", f"You have the newest version ({APP_VERSION}).")
@@ -259,25 +306,34 @@ class HistoryDialog(QDialog):
 
 
 _controller: UpdateController | None = None
+_timer: QTimer | None = None
 
 
-def start_background_check(window) -> None:
-    """Called once the main window is open: a quiet check a few seconds later (at most every 12 hours)."""
-    global _controller
-    _controller = UpdateController(window)
-
-    def _wn():
-        try:
-            e = updater.take_whats_new()
-            if e:
-                _controller.bridge.whats_new.emit(e)
-        except Exception:
-            log.exception("what's new failed")
-    threading.Thread(target=_wn, daemon=True).start()
-    if updater.should_check_now():
+def start(tray=None) -> UpdateController:
+    """Called once when the program starts (before sign-in, so it also works in the tray): a quiet check a few seconds
+    later when due, then every 6 hours. Also keeps the matching phone app ready for phones without internet."""
+    global _controller, _timer
+    _controller = UpdateController(None, tray)
+    _timer = QTimer(_controller)
+    _timer.timeout.connect(_controller.check_if_due)
+    _timer.start(30 * 60_000)
+    if updater.should_check_now(hours=6):
         QTimer.singleShot(8000, lambda: _controller.check(False))
     else:
         threading.Thread(target=lambda: updater.stage_phone_apk(), daemon=True).start()
+    return _controller
+
+
+def set_window(win) -> None:
+    if _controller is not None:
+        _controller.set_window(win)
+
+
+def start_background_check(window) -> None:
+    """Older entry point (kept for compatibility): start the checks and attach the window."""
+    if _controller is None:
+        start(None)
+    set_window(window)
 
 
 def controller() -> UpdateController | None:
@@ -288,4 +344,6 @@ def check_now(window) -> None:
     global _controller
     if _controller is None:
         _controller = UpdateController(window)
+    if _controller.window is None:
+        _controller.window = window
     _controller.check(True)

@@ -152,6 +152,8 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `test_new_pc_first_screen_restores_from_phone_or_file` | First screen of a new PC: Restore from phone (QR → backup arrives over the network → password) and Restore from a backup file; Start fresh still works |
 | ✅ PASSED | `tests/test_updater.py` (17 tests) | GitHub check (new / up to date / offline, drafts ignored, only github.com links), checksum-verified download (wrong or missing checksum refused, cancel leaves nothing), silent installer command, backup before install, phone offered the matching app only, `/sdj/apk` needs a linked phone and a saved copy |
 | ✅ PASSED | `test_update_popup_and_settings_check` | Settings → About → Check for updates; popup with the release notes; Skip this version |
+| ✅ PASSED | `tests/test_live_sync.py` (13 tests) | Live wait answers quiet / at once when behind / as soon as PC data changes, needs a linked phone and its own purpose, stopping answers waiting phones, `/sdj/wait` over HTTP, PC-started announce reaches the phone's address; automatic backup only when data changed (open / every 2 h / quit, switch off), Close Day counts, phone gets the newest automatic backup, newest backup of each day kept, content mark ignores the program's own settings, Windows start in the background |
+| ✅ PASSED | `test_update_found_while_in_the_tray_…`, `test_window_closes_to_the_tray_…` | Windows notification once per version while in the tray, popup when the window opens; window closes to the tray only in background mode |
 
 ## Android phone app  (`android/`, run by GitHub Actions on every push)
 
@@ -163,5 +165,7 @@ Run them yourself: `set QT_QPA_PLATFORM=offscreen` then `python -m pytest -v`.
 | ✅ PASSED | `ScreensTest` | All 17 phone screens are drawn with the sample shop (incl. Backups, and Backups before linking) |
 | ✅ PASSED | `BackupLogicTest` | Keep rule (30 days + one per month); closing backup + report arrive with the sync, are checked by SHA-256, saved in Downloads → SDJ Backups and confirmed to the PC; Google Drive copy waits for Wi-Fi; a damaged download is not kept; entries are re-sent once after a PC restore; Send to PC and the emergency shop copy use the restore code |
 | ✅ PASSED | `LiveLinkTest` | Against the real PC service: link, sign in, 7 offline entries synced, the PC's locked backup downloaded and sent back as to a new PC; the emergency rebuild is refused on a PC that has data |
+| ✅ PASSED | `UpdateLogicTest` v1.5.2 (CI) | GitHub release read (notes of this version only, Recommended, date; no checksum / foreign link / pre-release refused), update straight from the internet, up to date / no internet messages, mobile-data setting, update survives a restart, is not wiped when the PC offers nothing, tidied once installed |
+| ✅ PASSED | `BackupLogicTest.newestBackupOfEachDayIsKept`, `LiveLinkTest` live wait (CI) | Phone keeps the newest backup of each day; the real PC service answers the live wait |
 | ✅ PASSED | `UpdateLogicTest` (CI) | Version compare; a newer phone app is downloaded from the PC and kept ready; same / older version ignored; broken or wrong-checksum download is reported and leaves no file |
 | ✅ PASSED | `check_phone_ops.py` | The PC code replays the phone's sync request and accepts all 7 entries with exactly the same totals |

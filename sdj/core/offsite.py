@@ -34,7 +34,7 @@ from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 
 from .. import APP_VERSION, config
 from ..db import base
@@ -311,10 +311,37 @@ def create_bundle(label: str = "closing", business_date: date | None = None, pdf
         s.flush()
         item_id = item.id
         audit(s, "OFFSITE_BACKUP_CREATED", "offsite_item", item_id, {"name": name, "size": info["size"]})
-    settings.set_many({"offsite_last_bundle": when.isoformat(), "offsite_last_error": ""})
+    settings.set_many({"offsite_last_bundle": when.isoformat(), "offsite_last_error": "",
+                       "auto_offsite_mark": content_mark()})
     copy_to_second_folder()
     _cleanup_outbox()
     return dict(id=item_id, name=name, size=info["size"], path=str(info["path"]))
+
+
+# Tables whose rows are the shop's own data (not phone "last seen" times or settings written by the program itself).
+_MARK_TABLES = ("customers", "suppliers", "categories", "products", "imei_records", "stock_movements", "purchases",
+                "purchase_items", "sales", "sale_items", "payments", "returns", "return_items", "expenses",
+                "service_jobs", "service_items", "warranty_claims", "daily_closings", "users", "audit_logs")
+_MARK_UPDATED = ("products", "imei_records", "expenses", "service_jobs", "warranty_claims")
+
+
+def content_mark() -> str:
+    """A short fingerprint of the shop data. It changes when bills, jobs, stock, payments, customers... are added or
+    edited, so an automatic backup is made only when there is something new to keep."""
+    parts = []
+    with session_scope() as s:
+        for t in _MARK_TABLES:
+            try:
+                n, mx = s.execute(text(f"SELECT COUNT(*), MAX(id) FROM {t}")).one()   # noqa: S608 - fixed names
+            except Exception:
+                n, mx = -1, -1
+            parts.append(f"{t}:{n}:{mx}")
+        for t in _MARK_UPDATED:
+            try:
+                parts.append(f"{t}@{s.execute(text(f'SELECT MAX(updated_at) FROM {t}')).scalar()}")   # noqa: S608
+            except Exception:
+                parts.append(f"{t}@?")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:20]
 
 
 def after_closing(d: date, pdf_path: str | None) -> dict | None:
@@ -495,12 +522,18 @@ def _stamp(name: str) -> str:
 
 
 def keep_names(names: list[str], keep_daily: int = 30) -> set[str]:
-    """Newest *keep_daily* bundles plus the newest one of every month (kept forever)."""
+    """The newest bundle of each of the last *keep_daily* days (automatic backups make several a day), plus the newest
+    one of every month (kept forever)."""
     ordered = sorted(names, key=lambda n: (_stamp(n), n), reverse=True)
-    keep = set(ordered[:keep_daily])
+    keep = set(ordered[:1])
+    days: list[str] = []
     months: set[str] = set()
     for n in ordered:
-        month = _stamp(n)[:7]
+        st = _stamp(n)
+        day, month = st[:10], st[:7]
+        if day and day not in days and len(days) < keep_daily:
+            days.append(day)
+            keep.add(n)
         if month and month not in months:
             months.add(month)
             keep.add(n)

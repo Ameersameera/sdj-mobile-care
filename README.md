@@ -204,6 +204,26 @@ If the PC (and its disk) is lost, the shop's data comes back from a copy kept so
   the app offers to restore the most recent good backup automatically.
 * Command line check: `python scripts/init_database.py --check`.
 
+### Live sync, background mode and automatic backups (v1.5.2)
+* **Live sync**: while the phone app is on screen it keeps one request open on the PC (`/sdj/wait`, encrypted, no
+  sequence number because it changes nothing). The PC answers as soon as its data token changes (checked every 0.3 s,
+  at most 25 s), then the phone syncs. Phone entries are sent the moment they are saved. A failed try is repeated after
+  2, 4, 8 and 15 seconds; Wi-Fi coming back (Android network callback) or the PC starting (UDP 47812 "SDJ+<pc id>" sent
+  to each linked phone's last address and the local /24 broadcast) wakes the phone at once. Backups and app updates
+  download after the sync, so entries never wait behind a big file.
+* **Phone in the background**: WorkManager every 15 minutes on any network: sync when the PC is reachable, update check.
+* **PC in the background**: closing the window hides it to the tray (signed out); phones keep syncing, automatic backups
+  and update checks continue. *Settings → Phone link* has "Start when Windows starts" (now on by default, starts with
+  `--background`) and "Keep running in the background". A second start of the program opens the running copy
+  (`QLocalServer`). Tray → Quit closes it fully.
+* **Automatic off-PC backups** (`sdj/core/autobackup.py`): on open (newest older than 1 h), every 2 h, and on close
+  (newest older than 15 min) – only when `offsite.content_mark()` (row counts / newest ids / `updated_at` of the shop
+  tables) changed since the last bundle. The 2nd folder and phones keep the newest bundle of each of the last 30 days
+  plus the newest of every month.
+* **Phone updates from the internet**: the phone reads `releases/latest` from the GitHub API, downloads the APK from
+  github.com (every redirect must stay on GitHub) and checks it against GitHub's SHA-256 digest. Android still installs
+  it only over an app signed with the same key. Without internet the PC's copy (`/sdj/apk`) is used as before.
+
 ### Updates from inside the app (v1.5)
 * **PC**: when the program opens it asks GitHub (`api.github.com/repos/<owner>/<repo>/releases/latest`, at most every
   12 hours; *Settings → About* can switch it off or check now). A newer release shows a popup with the release notes.

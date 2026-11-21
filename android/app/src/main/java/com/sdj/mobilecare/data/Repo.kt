@@ -1,7 +1,14 @@
 package com.sdj.mobilecare.data
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -95,11 +102,19 @@ val MODE_LABELS = mapOf("CASH" to "Cash", "UPI" to "UPI", "CARD" to "Card", "OTH
  * made here that are not synced yet (so stock, dues and today's figures are right offline), and sends those entries
  * to the PC whenever the PC can be reached on the shop Wi-Fi.
  */
+/** How long the live sync waits before trying again when the PC is not reachable: quick at first. */
+private val RETRY_MS = longArrayOf(2_000L, 4_000L, 8_000L, 15_000L)
+
 class Repo(private val store: Store, private val net: Net, private val io: CoroutineDispatcher = Dispatchers.IO,
            private val appVersion: String = "1",
            val backups: Backups = Backups(store.dir, FileSink(File(store.dir, "backup-files")), null)) {
     private val mutex = Mutex()
     private val syncMutex = Mutex()
+    private val filesMutex = Mutex()
+    private val updateMutex = Mutex()
+    private val bg = CoroutineScope(SupervisorJob() + io)
+    private var filesJob: kotlinx.coroutines.Job? = null      // (Job alone is a repair job here)
+    private val nudges = Channel<Unit>(Channel.CONFLATED)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
     private val _update = MutableStateFlow<AppUpdate?>(null)
@@ -134,6 +149,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         withContext(io) { DATASETS.forEach { parse(it, store.data(it)) } }
         backups.refresh()
         checkWhatsNew()
+        restoreUpdate()
         if (cfg.bool("stay")) signedIn = users.firstOrNull { it.id == cfg.lng("signed_user") && it.id == shop?.userId }
         sync = sync.copy(lastOk = cfg.str("last_sync"), host = cfg.str("last_host"))
         publish(ready = true)
@@ -192,9 +208,113 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     private suspend fun readyUpdate(u: AppUpdate) {
         mutex.withLock {
             cfg.put("whats_new_next", JSONObject().put("version", u.version).put("notes", u.notes).put("date", u.date))
+            cfg.put("update_ready", JSONObject().put("version", u.version).put("size", u.size).put("sha", u.sha)
+                .put("path", u.path).put("notes", u.notes).put("date", u.date).put("recommended", u.recommended))
             store.saveConfig()
         }
         _update.value = u
+    }
+
+    /** A downloaded update survives an app restart: show it again (or tidy up once it is installed). */
+    private fun restoreUpdate() {
+        val u = cfg.obj("update_ready")
+        val ver = u.str("version")
+        if (ver.isEmpty()) return
+        val f = File(u.str("path"))
+        if (isNewerVersion(ver, appVersion) && f.exists() && f.length() == u.lng("size")) {
+            _update.value = AppUpdate(ver, u.lng("size"), u.str("sha"), AppUpdate.READY, path = f.absolutePath,
+                notes = u.str("notes"), date = u.str("date"), recommended = u.bool("recommended"))
+        } else {
+            cfg.put("update_ready", JSONObject())
+            store.saveConfig()
+            File(store.dir, "update").listFiles()?.forEach { it.delete() }
+        }
+    }
+
+    fun updatesOnMobileData(): Boolean = cfg.bool("updates_mobile_data", true)
+
+    suspend fun setUpdatesOnMobileData(on: Boolean) = mutex.withLock {
+        cfg.put("updates_mobile_data", on)
+        store.saveConfig()
+    }
+
+    /**
+     * Looks on GitHub for a newer phone app (internet on any Wi-Fi or mobile data – the shop PC is not needed) and
+     * downloads it inside the app. At most every 6 hours unless [force]. Returns a short message for the person.
+     */
+    suspend fun checkOnline(force: Boolean = false): String {
+        val now = System.currentTimeMillis()
+        if (!force && now - cfg.lng("gh_checked") < 6 * 3_600_000L) return ""
+        val info = try {
+            withContext(io) { GitHubRelease.parse(net.webJson(GitHubRelease.LATEST)) }
+        } catch (e: Exception) {
+            return "Could not check for updates. Check the phone's internet and try again."
+        }
+        mutex.withLock {
+            cfg.put("gh_checked", now)
+            store.saveConfig()
+        }
+        if (info == null || !isNewerVersion(info.version, appVersion)) {
+            tidyInstalledUpdate()
+            return "You have the newest version ($appVersion)."
+        }
+        if (info.apkSize !in 1..MAX_APK) return "The update file looks wrong, so it was not downloaded."
+        if (!force && !updatesOnMobileData() && !net.unmetered()) return ""          // waits for Wi-Fi
+        val ok = getUpdate(info.version, info.apkSize, info.apkSha, info.notes, info.date, info.recommended) { tmp ->
+            withContext(io) { net.webDownload(info.apkUrl, tmp, MAX_APK) }
+        }
+        return if (ok) "Version ${info.version} is ready – tap Update now." else (_update.value?.error ?: "The update could not be downloaded.")
+    }
+
+    /** Both ways of getting an update (GitHub, or the shop PC) end here: check the file and keep it ready to install. */
+    private suspend fun getUpdate(ver: String, size: Long, sha: String, notes: String, date: String, rec: Boolean,
+                                  fetch: suspend (File) -> String): Boolean = updateMutex.withLock {
+        val cur = _update.value
+        if (cur != null && cur.state == AppUpdate.READY && cur.version == ver && cur.sha == sha) return@withLock true
+        val dir = File(store.dir, "update")
+        val dest = File(dir, "SDJMobileCare-Phone-$ver.apk")
+        val have = withContext(io) { dest.exists() && dest.inputStream().use { Backups.sha256(it).second } == sha }
+        if (have) {
+            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
+            return@withLock true
+        }
+        _update.value = AppUpdate(ver, size, sha, AppUpdate.LOADING, notes = notes, date = date, recommended = rec)
+        val tmp = File(dir.apply { mkdirs() }, "apk.part")
+        try {
+            val got = fetch(tmp)
+            if (got != sha) throw IOException("the update file did not arrive complete")
+            withContext(io) {
+                dir.listFiles()?.forEach { if (it != tmp) it.delete() }
+                if (!tmp.renameTo(dest)) throw IOException("the update file could not be saved")
+            }
+            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
+            true
+        } catch (e: PcError) {
+            if (e.code == "replay") mutex.withLock { cfg.put("seq", cfg.optLong("seq", 0) + 1000); store.saveConfig() }
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = e.message ?: "The update did not arrive.",
+                notes = notes, date = date, recommended = rec)
+            false
+        } catch (e: Exception) {
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED,
+                error = "Update not downloaded yet (${e.message}) – it is tried again later.", notes = notes, date = date, recommended = rec)
+            false
+        } finally {
+            withContext(io) { tmp.delete() }
+        }
+    }
+
+    /** This app already is the offered version (it was installed): forget the update and delete its file. */
+    private suspend fun tidyInstalledUpdate() {
+        val cur = _update.value
+        if (cur != null && isNewerVersion(cur.version, appVersion)) return          // still waiting to be installed
+        _update.value = null
+        withContext(io) { File(store.dir, "update").listFiles()?.forEach { it.delete() } }
+        mutex.withLock {
+            if (cfg.obj("update_ready").length() > 0) {
+                cfg.put("update_ready", JSONObject())
+                store.saveConfig()
+            }
+        }
     }
 
     private fun parse(name: String, text: String?) {
@@ -823,10 +943,87 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     /** One round: send entries made here, receive what changed on the PC. Returns true if the PC answered. */
     suspend fun syncOnce(full: Boolean = false): Boolean {
         if (!linked) return false
-        return syncMutex.withLock { syncLocked(full) }
+        val files = syncMutex.withLock { syncLocked(full) } ?: return false
+        startFiles(files)
+        return true
     }
 
-    private suspend fun syncLocked(full: Boolean): Boolean {
+    /** What a sync answer asked the phone to download (backups, a newer app). */
+    private class Files(val backups: JSONArray?, val update: JSONObject?, val device: String, val key: ByteArray)
+
+    /** Backups and app updates download after the sync, so new entries never wait behind a big file. */
+    private fun startFiles(f: Files) {
+        if (filesJob?.isActive == true) return                 // one download round at a time; the next sync offers again
+        filesJob = bg.launch {
+            filesMutex.withLock {
+                runCatching { fetchBackups(f.backups, f.device, f.key) }
+                runCatching { offerUpdate(f.update, f.device, f.key) }
+            }
+        }
+    }
+
+    /** Waits for the backup / update downloads started by the last sync (background sync and tests). */
+    suspend fun awaitFiles() {
+        filesJob?.join()
+    }
+
+    // ================================================================ live sync (while the app is on screen)
+    /** Wakes the live sync at once: Wi-Fi came back, or the shop PC was switched on. */
+    fun nudge() {
+        nudges.trySend(Unit)
+    }
+
+    internal enum class Wait { CHANGED, QUIET, OLD_PC, FAILED }
+
+    /**
+     * Runs while the app is on screen: syncs now, then again as soon as the PC's data changes (the PC answers a waiting
+     * request at once), when Wi-Fi comes back, or when the shop PC is switched on. Quick retries when the PC is away.
+     */
+    suspend fun live(): Unit = coroutineScope {
+        val stopWifi = net.watchWifi { nudge() }
+        val pcId = cfg.str("pc")
+        val listener = launch(io) { if (linked) net.listenForPc(pcId, { isActive }) { nudge() } }
+        var fails = 0
+        try {
+            while (isActive) {
+                if (syncOnce()) {
+                    fails = 0
+                    val started = System.currentTimeMillis()
+                    when (waitForChange()) {
+                        Wait.CHANGED, Wait.QUIET -> {}                                   // sync again right away
+                        Wait.OLD_PC -> withTimeoutOrNull(5_000L) { nudges.receive() }    // older PC program: ask every 5 s
+                        Wait.FAILED -> if (System.currentTimeMillis() - started < 2_000) withTimeoutOrNull(3_000L) { nudges.receive() }
+                    }
+                } else {
+                    fails++
+                    withTimeoutOrNull(RETRY_MS[minOf(fails, RETRY_MS.size) - 1]) { nudges.receive() }
+                }
+            }
+        } finally {
+            listener.cancel()
+            stopWifi()
+        }
+    }
+
+    /** Holds one request open on the PC until its data changes or ~25 s pass, so PC changes show here at once. */
+    internal suspend fun waitForChange(seconds: Int = 25): Wait {
+        val device = cfg.str("device")
+        val host = cfg.str("last_host")
+        if (device.isEmpty() || host.isEmpty()) return Wait.FAILED
+        val key = Crypto.unb64(cfg.str("key"))
+        val aad = "$device|wait".toByteArray()
+        return try {
+            val env = Crypto.seal(key, JSONObject().put("token", cfg.str("token")).put("wait", seconds), aad).put("d", device)
+            val ans = withContext(io) { Crypto.unseal(key, net.post(host, cfg.optInt("port", Net.PORT), "/sdj/wait", env, 40_000), aad) }
+            if (ans.bool("changed")) Wait.CHANGED else Wait.QUIET
+        } catch (e: PcError) {
+            if (e.status == 404) Wait.OLD_PC else Wait.FAILED
+        } catch (e: Exception) {
+            Wait.FAILED
+        }
+    }
+
+    private suspend fun syncLocked(full: Boolean): Files? {
         val device = cfg.str("device")
         val key = Crypto.unb64(cfg.str("key"))
         val (env, sentIds) = mutex.withLock {
@@ -851,9 +1048,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         return try {
             val ans = withContext(io) { Crypto.unseal(key, postToPc(env), device.toByteArray()) }
             mutex.withLock { withContext(io) { applyAnswer(ans, sentIds) } }
-            fetchBackups(ans.optJSONArray("backups"), device, key)
-            offerUpdate(ans.optJSONObject("update"), device, key)
-            true
+            Files(ans.optJSONArray("backups"), ans.optJSONObject("update"), device, key)
         } catch (e: PcError) {
             mutex.withLock {
                 when (e.code) {
@@ -863,14 +1058,14 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
                 }
                 publish()
             }
-            false
+            null
         } catch (e: Exception) {
             mutex.withLock {
                 val why = if (e is PcUnreachable && net.wifi() != null) "\nIf you are at the shop: ${e.message}" else ""
                 sync = sync.copy(running = false, error = "PC not reachable – entries are safe on this phone and will sync on the shop Wi-Fi.$why")
                 publish()
             }
-            false
+            null
         }
     }
 
@@ -878,27 +1073,22 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         val port = cfg.optInt("port", Net.PORT)
         val hosts = (listOf(cfg.str("last_host")) + cfg.arr("hosts").strings()).filter { it.isNotBlank() }.distinct()
         var last: Pair<String, IOException>? = null
-        for (h in hosts) {
-            try {
-                val r = net.post(h, port, "/sdj/sync", env)
-                cfg.put("last_host", h)
-                return r
-            } catch (e: IOException) {
-                last = h to e
-                continue
-            }
+        fun attempt(h: String): JSONObject? = try {
+            net.post(h, port, "/sdj/sync", env).also { cfg.put("last_host", h) }
+        } catch (e: IOException) {
+            last = h to e
+            null
         }
-        val found = net.discover(cfg.str("pc"))
-        for ((h, _) in found) {
-            try {
-                val r = net.post(h, port, "/sdj/sync", env)
-                cfg.put("last_host", h).put("hosts", JSONArray((listOf(h) + hosts).distinct().take(6)))
-                return r
-            } catch (e: IOException) {
-                last = h to e
-                continue
-            }
+        // 1. where the PC answered last time (almost always right)
+        hosts.firstOrNull()?.let { h -> attempt(h)?.let { return it } }
+        // 2. ask the Wi-Fi where the PC is now – its address may have changed (quicker than trying old addresses)
+        for ((h, _) in net.discover(cfg.str("pc"), 1200)) {
+            val r = attempt(h) ?: continue
+            cfg.put("hosts", JSONArray((listOf(h) + hosts).distinct().take(6)))
+            return r
         }
+        // 3. the PC's other addresses
+        for (h in hosts.drop(1)) attempt(h)?.let { return it }
         throw PcUnreachable(last?.let { reachError(it.first, it.second) } ?: "PC not found on this Wi-Fi.")
     }
 
@@ -1020,29 +1210,18 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         }
     }
 
-    /** The PC says a newer phone app is waiting: download it (Wi-Fi to the PC, no internet) and keep it ready to install. */
+    /** The PC says a newer phone app is waiting: download it from the PC (shop Wi-Fi, no internet) and keep it ready. */
     suspend fun offerUpdate(meta: JSONObject?, device: String, key: ByteArray) {
-        val dir = File(store.dir, "update")
         val ver = meta?.str("version").orEmpty()
         val sha = meta?.str("sha").orEmpty().lowercase()
         val size = meta?.lng("size") ?: 0L
-        val notes = meta?.str("notes").orEmpty()
-        val date = meta?.str("date").orEmpty()
-        val rec = meta?.bool("recommended") ?: false
         if (meta == null || !isNewerVersion(ver, appVersion) || sha.length != 64 || size !in 1..MAX_APK) {
-            if (_update.value != null) _update.value = null
-            withContext(io) { dir.listFiles()?.forEach { it.delete() } }       // installed already: tidy up
+            tidyInstalledUpdate()
             return
         }
-        val dest = File(dir, "SDJMobileCare-Phone-$ver.apk")
-        val have = withContext(io) { dest.exists() && dest.inputStream().use { Backups.sha256(it).second } == sha }
-        if (have) {
-            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
-            return
-        }
-        _update.value = AppUpdate(ver, size, sha, AppUpdate.LOADING, notes = notes, date = date, recommended = rec)
-        val tmp = File(dir.apply { mkdirs() }, "apk.part")
-        try {
+        val cur = _update.value
+        if (cur != null && cur.state == AppUpdate.READY && !isNewerVersion(ver, cur.version)) return   // already have it
+        getUpdate(ver, size, sha, meta.str("notes"), meta.str("date"), meta.bool("recommended")) { tmp ->
             val seq = mutex.withLock {
                 val n = cfg.optLong("seq", 0) + 1
                 cfg.put("seq", n)
@@ -1050,20 +1229,7 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
                 n
             }
             val env = Crypto.seal(key, JSONObject().put("seq", seq).put("app", appVersion), "$device|apk".toByteArray()).put("d", device)
-            val got = withContext(io) { downloadFromPc(env, tmp, "/sdj/apk") }
-            if (got != sha) throw IOException("the update file did not arrive complete")
-            withContext(io) {
-                dir.listFiles()?.forEach { if (it != tmp) it.delete() }
-                if (!tmp.renameTo(dest)) throw IOException("the update file could not be saved")
-            }
-            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
-        } catch (e: PcError) {
-            if (e.code == "replay") mutex.withLock { cfg.put("seq", cfg.optLong("seq", 0) + 1000); store.saveConfig() }
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = e.message ?: "The PC did not send the update.", notes = notes, date = date, recommended = rec)
-        } catch (e: Exception) {
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = "Update not downloaded yet (${e.message}) – it is tried again at the next sync.", notes = notes, date = date, recommended = rec)
-        } finally {
-            tmp.delete()
+            withContext(io) { downloadFromPc(env, tmp, "/sdj/apk") }
         }
     }
 

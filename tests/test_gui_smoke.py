@@ -633,3 +633,45 @@ def test_whats_new_card_history_and_later(gui, monkeypatch):
     for w in (dlg, hist, pop):                                        # parent-less widgets: delete them before Qt shuts down
         w.deleteLater()
     app.processEvents()
+
+
+def test_update_found_while_in_the_tray_gives_a_windows_notice_then_the_popup(gui, monkeypatch):
+    """v1.5.2: no window open (program in the tray) → one Windows notification per version; the popup comes once the
+    owner opens the window."""
+    win, msgs, app = gui
+    from PySide6.QtTest import QTest
+    from sdj.ui import update_ui
+    notices = []
+
+    class FakeTray:
+        def notify(self, title, text, on_click=None, msecs=10000):
+            notices.append(title)
+
+    latest = dict(version="9.9.9", tag="v9.9.9", notes="- Faster sync", page="https://github.com/x/y", date="2026-11-25",
+                  recommended=False, setup=dict(name="SDJMobileCare_Setup_9.9.9.exe", url="https://github.com/x", size=1,
+                                                sha="a" * 64), apk=None)
+    ctl = update_ui.UpdateController(None, FakeTray())
+    ctl._on_checked(dict(state="new", latest=latest), False)
+    ctl._on_checked(dict(state="new", latest=latest), False)
+    assert notices == ["SDJ Mobile Care 9.9.9 is ready"]
+    shown = []
+    monkeypatch.setattr(update_ui.UpdateDialog, "exec", lambda self: shown.append(self.latest["version"]) or 0)
+    ctl._whats_new_done = True
+    ctl.set_window(win)
+    QTest.qWait(3400)
+    assert shown == ["9.9.9"]
+    ctl.set_window(None)
+    ctl.deleteLater()
+
+
+def test_window_closes_to_the_tray_only_in_background_mode(gui, monkeypatch):
+    win, msgs, app = gui
+    from sdj.ui import tray
+    monkeypatch.setattr(tray.life, "quitting", False)
+    went = []
+    win.close_to_tray = lambda: went.append(1) or True
+    assert win.close() is False and went == [1]            # stays running (the program keeps it in the tray)
+    monkeypatch.setattr(tray.life, "quitting", True)        # Quit / update / Windows shutting down: really closes
+    win.close_to_tray = lambda: went.append(2) or True
+    assert win.close() is True and went == [1]
+    assert isinstance(tray.available(), bool)

@@ -63,6 +63,12 @@ DEFAULTS: dict[str, Any] = {
     "last_backup_at": "",
     # updates (GitHub releases)
     "update_auto_check": True,
+    # v1.5.2: automatic off-PC backups, background (tray) mode
+    "auto_offsite": True,
+    "auto_offsite_mark": "",
+    "run_in_background": True,
+    "tray_hint_shown": False,
+    "autostart_decided": False,
     "update_last_check": "",
     "update_skip_version": "",
     "phone_apk": {},

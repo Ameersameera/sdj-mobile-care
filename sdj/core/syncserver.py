@@ -98,6 +98,8 @@ class _Handler(BaseHTTPRequestHandler):
                 out = phonesync.handle_pair(env, ip)
             elif path == "/sdj/sync":
                 out = phonesync.handle_sync(env, ip)
+            elif path == "/sdj/wait":
+                out = phonesync.handle_wait(env, ip)
             elif path == "/sdj/backup":
                 self._send_file(phonesync.handle_backup(env, ip))
                 return
@@ -126,8 +128,10 @@ class _Server(ThreadingHTTPServer):
 
 
 class SyncServer:
-    def __init__(self, port: int = phonesync.PORT, udp_port: int = phonesync.DISCOVERY_PORT, host: str = "0.0.0.0"):
+    def __init__(self, port: int = phonesync.PORT, udp_port: int = phonesync.DISCOVERY_PORT, host: str = "0.0.0.0",
+                 announce_port: int = phonesync.ANNOUNCE_PORT):
         self.port, self.udp_port, self.host = port, udp_port, host
+        self.announce_port = announce_port
         self._http: _Server | None = None
         self._udp: socket.socket | None = None
         self._threads: list[threading.Thread] = []
@@ -169,8 +173,36 @@ class SyncServer:
             log.warning("phone discovery (UDP %s) not available: %s", self.udp_port, exc)
             self._udp = None
         self.error = ""
+        phonesync.wake_waiters(False)
         log.info("phone sync listening on port %s", self.port)
+        a = threading.Thread(target=self._announce, name="sdj-phone-announce", daemon=True)
+        a.start()
         return True
+
+    def _announce(self) -> None:
+        """Tell linked phones on the Wi-Fi that the PC is ready, so an open phone app syncs at once instead of waiting
+        for its next try. Sent to each phone's last address and to the local network (a few times: Wi-Fi may be slow)."""
+        try:
+            msg = b"SDJ+" + phonesync.pc_identity().encode("ascii", "ignore")
+            targets = set(phonesync.announce_targets()) | set(_broadcast_addresses())
+        except Exception:
+            log.exception("phone announce failed")
+            return
+        if not targets:
+            return
+        for wait in (0.0, 2.0, 6.0):
+            if self._stop.wait(wait):
+                return
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+                    u.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    for t in targets:
+                        try:
+                            u.sendto(msg, (t, self.announce_port))
+                        except OSError:
+                            pass
+            except OSError:
+                log.info("phone announce could not be sent")
 
     def _udp_loop(self) -> None:
         sock = self._udp
@@ -193,6 +225,7 @@ class SyncServer:
 
     def stop(self) -> None:
         self._stop.set()
+        phonesync.wake_waiters(True)
         if self._http is not None:
             try:
                 self._http.shutdown()
@@ -209,6 +242,19 @@ class SyncServer:
         for t in self._threads:
             t.join(timeout=3)
         self._threads = []
+
+
+def _broadcast_addresses() -> list[str]:
+    """x.y.z.255 for each IPv4 address of this PC (shop networks are almost always /24), plus 255.255.255.255."""
+    out = {"255.255.255.255"}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip.count(".") == 3:
+                out.add(ip.rsplit(".", 1)[0] + ".255")
+    except OSError:
+        pass
+    return sorted(out)
 
 
 _service = SyncServer()

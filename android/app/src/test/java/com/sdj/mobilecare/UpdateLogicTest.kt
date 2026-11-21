@@ -2,6 +2,7 @@ package com.sdj.mobilecare
 
 import com.sdj.mobilecare.data.AppUpdate
 import com.sdj.mobilecare.data.Backups
+import com.sdj.mobilecare.data.GitHubRelease
 import com.sdj.mobilecare.data.Net
 import com.sdj.mobilecare.data.Repo
 import com.sdj.mobilecare.data.Store
@@ -127,5 +128,95 @@ class UpdateLogicTest {
         r.offerUpdate(meta(bytes, "0.0.2"), "dev", key)
         assertEquals("0.0.2", r.takeUpdateNotice()!!.version)
         assertNull(r.takeUpdateNotice())                                 // not again
+    }
+
+    // ---------------------------------------------------------------- v1.5.2: straight from the internet (GitHub)
+    private class WebNet(val rel: JSONObject?, val bytes: ByteArray, val wifi: Boolean = true) : Net(null) {
+        var downloads = 0
+        override fun webJson(url: String): JSONObject = rel ?: throw IOException("no internet in test")
+        override fun webDownload(url: String, dest: File, maxBytes: Long): String {
+            downloads++
+            dest.writeBytes(bytes)
+            return Backups.sha256(bytes.inputStream()).second
+        }
+        override fun unmetered(): Boolean = wifi
+        override fun post(host: String, port: Int, path: String, body: JSONObject, readTimeoutMs: Int): JSONObject =
+            throw IOException("no PC in test")
+        override fun discover(pcId: String?, timeoutMs: Int): List<Pair<String, JSONObject>> = emptyList()
+    }
+
+    private fun release(version: String, bytes: ByteArray): JSONObject {
+        val body = "## SDJ\n\n### What's new in $version – faster\n- **Faster** sync\nRecommended: yes\n\n### What's new in 1.0.0\n- old notes\n"
+        val asset = JSONObject().put("name", "SDJMobileCare-Phone-$version.apk").put("size", bytes.size.toLong())
+            .put("digest", "sha256:" + Backups.sha256(bytes.inputStream()).second)
+            .put("browser_download_url", "https://github.com/Ameersameera/sdj-mobile-care/releases/download/v$version/SDJMobileCare-Phone-$version.apk")
+        return JSONObject().put("tag_name", "v$version").put("published_at", "2026-11-25T10:00:00Z").put("body", body)
+            .put("assets", org.json.JSONArray().put(asset))
+    }
+
+    @Test fun releaseNotesAndFileAreReadFromGitHub() {
+        val bytes = ByteArray(10) { 1 }
+        val info = GitHubRelease.parse(release("2.0.0", bytes))!!
+        assertEquals("2.0.0", info.version)
+        assertTrue(info.recommended)
+        assertTrue(info.notes.contains("Faster sync"))
+        assertFalse(info.notes.contains("old notes"))
+        assertFalse(info.notes.contains("Recommended"))
+        assertEquals("2026-11-25", info.date)
+        val noSha = release("2.0.0", bytes).also { it.getJSONArray("assets").getJSONObject(0).remove("digest") }
+        assertNull(GitHubRelease.parse(noSha))
+        val foreign = release("2.0.0", bytes).also { it.getJSONArray("assets").getJSONObject(0).put("browser_download_url", "https://evil.example.com/a.apk") }
+        assertNull(GitHubRelease.parse(foreign))
+        assertNull(GitHubRelease.parse(release("2.0.0", bytes).put("prerelease", true)))
+        assertFalse(GitHubRelease.okUrl("http://github.com/x"))
+        assertFalse(GitHubRelease.okUrl("https://github.com.evil.com/x"))
+        assertTrue(GitHubRelease.okUrl("https://objects.githubusercontent.com/x"))
+    }
+
+    @Test fun phoneGetsTheUpdateStraightFromTheInternet() = runBlocking {
+        val bytes = ByteArray(4000) { (it % 13).toByte() }
+        val net = WebNet(release("99.0.0", bytes), bytes)
+        val r = testRepo(tmp.newFolder(), net, version = "1.5.2")
+        val msg = r.checkOnline(force = true)
+        assertTrue(msg, msg.contains("99.0.0"))
+        val u = r.update.value!!
+        assertEquals(AppUpdate.READY, u.state)
+        assertTrue(u.recommended)
+        assertTrue(u.notes.contains("Faster sync"))
+        assertEquals(bytes.size.toLong(), File(u.path).length())
+        assertEquals("", r.checkOnline())                      // checked a moment ago: not again for 6 hours
+        assertEquals(1, net.downloads)
+    }
+
+    @Test fun upToDateAndNoInternetAreToldPlainly() = runBlocking {
+        val bytes = ByteArray(10)
+        assertTrue(testRepo(tmp.newFolder(), WebNet(release("1.5.2", bytes), bytes), version = "1.5.2").checkOnline(true).contains("newest"))
+        assertTrue(testRepo(tmp.newFolder(), WebNet(null, bytes), version = "1.5.2").checkOnline(true).contains("internet"))
+    }
+
+    @Test fun mobileDataSettingIsRespectedForAutomaticChecks() = runBlocking {
+        val bytes = ByteArray(100) { 2 }
+        val r = testRepo(tmp.newFolder(), WebNet(release("99.0.0", bytes), bytes, wifi = false), version = "1.5.2")
+        assertTrue(r.updatesOnMobileData())                     // on by default
+        r.setUpdatesOnMobileData(false)
+        assertEquals("", r.checkOnline())                        // on mobile data: waits for Wi-Fi
+        assertNull(r.update.value)
+        assertTrue(r.checkOnline(force = true).contains("99.0.0"))   // the person asked: downloads now
+    }
+
+    @Test fun internetUpdateSurvivesRestartIsNotWipedByThePcAndIsTidiedOnceInstalled() = runBlocking {
+        val dir = tmp.newFolder()
+        val bytes = ByteArray(800) { 5 }
+        val r = testRepo(dir, WebNet(release("99.0.0", bytes), bytes), version = "1.5.2")
+        r.checkOnline(force = true)
+        r.offerUpdate(null, "dev", key)                         // a PC without the new app offers nothing
+        assertEquals(AppUpdate.READY, r.update.value!!.state)
+        val again = Repo(Store(dir), OfflineNet(), kotlinx.coroutines.Dispatchers.Unconfined, "1.5.2")
+        again.load()
+        assertEquals("99.0.0", again.update.value!!.version)
+        val installed = Repo(Store(dir), OfflineNet(), kotlinx.coroutines.Dispatchers.Unconfined, "99.0.0")
+        installed.load()
+        assertNull(installed.update.value)
+        assertFalse(File(dir, "update").listFiles()?.any { it.name.endsWith(".apk") } ?: false)
     }
 }

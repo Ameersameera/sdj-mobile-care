@@ -280,7 +280,7 @@ class Backups(private val dir: File, val sink: BackupSink, private val drive: Dr
         write()
     }
 
-    /** Keeps the last 30 daily backups and the newest of every month (unless "keep all"); reports are all kept. */
+    /** Keeps the newest backup of each of the last 30 days and of every month (unless "keep all"); reports are all kept. */
     @Synchronized fun retain(keepDaily: Int = 30) {
         if (data.bool("keep_all")) return
         val items = list()
@@ -340,11 +340,17 @@ class Backups(private val dir: File, val sink: BackupSink, private val drive: Dr
     }
 
     companion object {
+        /** The newest backup of each of the last [keepDaily] days (the PC makes several a day), the newest of every month
+         *  (kept for good), and all closing reports. */
         fun keepSet(items: List<BackupItem>, keepDaily: Int = 30): Set<String> {
             val backups = items.filter { !it.isReport }.sortedByDescending { it.stamp }
-            val keep = backups.take(keepDaily).map { it.uri }.toMutableSet()
+            val keep = mutableSetOf<String>()
+            backups.firstOrNull()?.let { keep += it.uri }
+            val days = LinkedHashSet<String>()
             val months = HashSet<String>()
             for (b in backups) {
+                val d = b.stamp.take(10)
+                if (days.size < keepDaily && d.length == 10 && days.add(d)) keep += b.uri
                 val m = b.stamp.take(7)
                 if (m.length == 7 && months.add(m)) keep += b.uri
             }

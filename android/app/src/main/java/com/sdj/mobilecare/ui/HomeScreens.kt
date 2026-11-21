@@ -71,6 +71,7 @@ fun HomeScreen(ui: Ui, st: UiState, nav: Nav) {
         UpdateBanner(ui)
         UpdatePopup(ui, st.pending.size)
         WhatsNewPopup(ui)
+        AskNotificationsOnce(ui)
         SyncSummary(st) { nav.go(Route.Sync) }
         if (u?.role == "ADMIN" || bs.items.isNotEmpty()) {
             val (line, ok) = backupLine(bs)
