@@ -63,7 +63,7 @@ class UpdateLogicTest {
     @Test fun sameOrOlderVersionIsIgnored() = runBlocking {
         val bytes = ByteArray(100)
         val r = testRepo(tmp.newFolder(), ApkNet(bytes))
-        r.offerUpdate(meta(bytes, "0.0.1"), "dev-1", ByteArray(32))
+        r.offerUpdate(meta(bytes, "0.0.0"), "dev-1", ByteArray(32))
         assertNull(r.update.value)
         r.offerUpdate(null, "dev-1", ByteArray(32))
         assertNull(r.update.value)
