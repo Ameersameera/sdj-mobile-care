@@ -10,9 +10,14 @@ plugins {
 val appVersion: String = Regex("APP_VERSION\\s*=\\s*\"([^\"]+)\"")
     .find(rootProject.file("../sdj/__init__.py").readText())?.groupValues?.get(1) ?: "1.0.0"
 val vParts = (appVersion.split(".").map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)).take(3)
+// Signing key: CI decrypts the encrypted key and sets these variables (see android/keystore/README.md).
 val keyProps = Properties().apply {
-    val f = rootProject.file("keystore/keystore.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
+    val path = System.getenv("SDJ_KEYSTORE_PATH")
+    val pass = System.getenv("SDJ_KEYSTORE_PASSWORD")
+    if (!path.isNullOrBlank() && !pass.isNullOrBlank()) {
+        setProperty("storeFile", path); setProperty("storePassword", pass)
+        setProperty("keyAlias", System.getenv("SDJ_KEY_ALIAS") ?: "sdj"); setProperty("keyPassword", pass)
+    }
 }
 
 android {

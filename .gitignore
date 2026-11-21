@@ -8,3 +8,7 @@ dist/
 .gradle/
 .kotlin/
 local.properties
+
+# Phone-app signing key: only the ENCRYPTED copy is committed (android/keystore/*.enc).
+android/keystore/*.jks
+android/keystore/*.properties
