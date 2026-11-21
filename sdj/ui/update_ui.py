@@ -36,6 +36,7 @@ def _nice_date(d: str) -> str:
 
 
 class _Bridge(QObject):
+    """Carries results from worker threads to the window (a child object, so it is deleted with its owner)."""
     whats_new = Signal(dict)
     checked = Signal(dict, bool)         # result, manual
     progress = Signal(int, int)
@@ -90,7 +91,7 @@ class UpdateDialog(QDialog):
         row.addWidget(self.later_btn)
         row.addWidget(self.go_btn)
         lay.addLayout(row)
-        self.bridge = _Bridge()
+        self.bridge = _Bridge(self)
         self.bridge.progress.connect(self._on_progress)
         self.bridge.failed.connect(self._on_failed)
         self.bridge.ready.connect(self._on_ready)
@@ -170,7 +171,7 @@ class UpdateController(QObject):
     def __init__(self, parent_window=None):
         super().__init__(parent_window)
         self.window = parent_window
-        self.bridge = _Bridge()
+        self.bridge = _Bridge(self)
         self.bridge.checked.connect(self._on_checked)
         self.bridge.whats_new.connect(self._show_whats_new)
         self._running = False

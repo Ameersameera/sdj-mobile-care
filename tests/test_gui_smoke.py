@@ -630,3 +630,6 @@ def test_whats_new_card_history_and_later(gui, monkeypatch):
     assert shown == []
     ctl._on_checked(dict(state="new", latest=latest), True)           # but Check for updates still shows it
     assert shown == [1]
+    for w in (dlg, hist, pop):                                        # parent-less widgets: delete them before Qt shuts down
+        w.deleteLater()
+    app.processEvents()

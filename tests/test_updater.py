@@ -93,10 +93,13 @@ class _Files(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def web(monkeypatch):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Files)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
     monkeypatch.setattr(updater, "_check_url", lambda url: None)
     yield f"http://127.0.0.1:{srv.server_address[1]}/"
     srv.shutdown()
+    srv.server_close()
+    th.join(5)
 
 
 def test_download_verifies_checksum(db, web, tmp_path):
