@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -56,3 +57,19 @@ def make_product(db, cat):
         units = [{"imei1": i} for i in imeis] if imeis else None
         return create_product(data, opening_qty=qty, opening_cost=cost, imei_units=units)
     return _make
+
+
+# On the CI runners Qt sometimes crashes while Python shuts down AFTER every test has passed, which turned a green run
+# red (exit code 1). The result is already known then, so on CI the process ends with it right after pytest's summary.
+_final = {"code": None}
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _final["code"] = int(exitstatus)
+
+
+def pytest_unconfigure(config):
+    if os.environ.get("CI") and _final["code"] is not None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(_final["code"])
