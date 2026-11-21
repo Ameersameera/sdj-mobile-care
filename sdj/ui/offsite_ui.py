@@ -413,8 +413,8 @@ class RestoreFromPhoneDialog(QDialog):
 # ================================================================ Settings → Backup card
 class OffsiteCard(Card):
     def __init__(self, parent=None):
-        super().__init__("Off-PC backups", "locked with the owner's password · made after every daily closing · kept on "
-                                           "the phone and a 2nd folder")
+        super().__init__("Off-PC backups", "locked with the owner's password · made after every daily closing and by "
+                                           "itself when data changes · kept on the phone and a 2nd folder")
         self.owner = current_user().can("settings")
         self.status_lbl = label("", wrap=True)
         self.status_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -426,13 +426,18 @@ class OffsiteCard(Card):
         self.b_unset = button("Remove 2nd folder", "ghost", None, self.remove_folder)
         self.b_open = button("Open 2nd folder", "ghost", None, self.open_folder)
         self.add(hbox(self.b_now, self.b_folder, self.b_unset, self.b_open, None))
+        self.b_auto = QCheckBox("Also make one by itself: when the program opens, every 2 hours and when it closes "
+                                "(only when something changed). Phones and the 2nd folder keep the newest of each day.")
+        self.b_auto.setChecked(bool(settings.get("auto_offsite")))
+        self.b_auto.toggled.connect(lambda on: settings.set_value("auto_offsite", bool(on)))
+        self.add(self.b_auto)
         self.b_code = button("Create recovery code…", "", "key-round", self.make_code)
         self.b_phone = button("Restore from phone…", "danger", "smartphone", self.restore_phone)
         self.add(hbox(self.b_code, self.b_phone, None))
         self.add(label("Google Drive: install 'Google Drive for desktop' on this PC and choose a folder inside its drive "
                        "(for example G:\\My Drive\\SDJ Backups) as the 2nd backup folder – every backup then goes to "
                        "your Google Drive by itself. A pen drive works the same way.", "Muted", wrap=True))
-        for b in (self.b_folder, self.b_unset, self.b_code, self.b_phone):
+        for b in (self.b_folder, self.b_unset, self.b_code, self.b_phone, self.b_auto):
             b.setVisible(self.owner)
         self.refresh()
 

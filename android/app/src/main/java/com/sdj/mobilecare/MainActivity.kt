@@ -6,8 +6,6 @@ import androidx.activity.compose.setContent
 import com.sdj.mobilecare.ui.AppRoot
 import com.sdj.mobilecare.ui.AppTheme
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -19,17 +17,12 @@ class MainActivity : ComponentActivity() {
         setContent { AppTheme { AppRoot(app.repo, App.phoneName()) } }
     }
 
-    /** While the app is on screen it syncs every few seconds (only on the shop Wi-Fi; no internet is used). */
+    /** While the app is on screen it stays in live sync with the shop PC (changes show within a second or two). */
     override fun onStart() {
         super.onStart()
         val app = application as App
         app.repo.backups.refresh()                 // storage permission may have changed
-        syncLoop = app.scope.launch {
-            while (isActive) {
-                val ok = app.repo.syncOnce()
-                delay(if (ok) 8_000L else 20_000L)
-            }
-        }
+        syncLoop = app.scope.launch { app.repo.live() }
     }
 
     override fun onStop() {

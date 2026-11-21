@@ -77,12 +77,45 @@ def _recover_database(db: Path) -> bool:
     return True
 
 
+def _instance_name() -> str:
+    """One name per data folder, so the demo copy and the real shop each have their own running program."""
+    import hashlib
+    return "SDJMobileCare-" + hashlib.sha1(str(config.data_root()).encode("utf-8")).hexdigest()[:12]
+
+
+def _show_running_copy() -> bool:
+    """Another copy is running (perhaps in the tray): ask it to open its window. True when it answered."""
+    try:
+        from PySide6.QtNetwork import QLocalSocket
+        sock = QLocalSocket()
+        sock.connectToServer(_instance_name())
+        if not sock.waitForConnected(1500):
+            return False
+        sock.write(b"show\n")
+        sock.flush()
+        sock.waitForBytesWritten(1000)
+        sock.disconnectFromServer()
+        return True
+    except Exception:
+        log.exception("could not reach the running copy")
+        return False
+
+
+def _drain(server) -> None:
+    while server.hasPendingConnections():
+        c = server.nextPendingConnection()
+        c.disconnected.connect(c.deleteLater)
+        c.disconnectFromServer()
+
+
 def run(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     parser = argparse.ArgumentParser(prog="SDJMobileCare", add_help=True)
     parser.add_argument("--data-dir", help="Folder for the database, logs and documents")
     parser.add_argument("--demo", action="store_true", help="Open the sample/demo database (separate from real data)")
     parser.add_argument("--self-test", action="store_true", help="Check this installation (uses a temporary folder)")
+    parser.add_argument("--background", action="store_true",
+                        help="Start in the background (tray icon), e.g. when Windows starts; open it from the icon")
     args, qt_args = parser.parse_known_args(argv[1:])
     if args.self_test:
         from ..selftest import run_self_test
@@ -111,9 +144,17 @@ def run(argv: list[str] | None = None) -> int:
     lock = QLockFile(str(config.data_root() / "sdj.lock"))
     lock.setStaleLockTime(0)
     if not lock.tryLock(200):
+        if args.background:
+            return 0                                 # already running (e.g. in the tray): nothing to do
+        if _show_running_copy():
+            return 0                                 # the copy in the tray opens its window
         QMessageBox.warning(None, APP_NAME, "SDJ Mobile Care is already open on this computer.\n"
                                             "Use the window that is already running.")
         return 1
+    from PySide6.QtNetwork import QLocalServer
+    instance = QLocalServer(app)
+    QLocalServer.removeServer(_instance_name())
+    instance.listen(_instance_name())
 
     from ..db.init_db import open_database
     db = config.db_path()
@@ -128,17 +169,65 @@ def run(argv: list[str] | None = None) -> int:
             return 2
         open_database(db)
 
-    from .phone_link import start_bridge
+    from .phone_link import fix_autostart_flag, start_bridge
     start_bridge()                                   # phones can sync even while the login screen is open
+    fix_autostart_flag()
 
-    from ..core import settings
-    from ..core.auth import user_count
+    from ..core import autobackup, settings
+    from ..core.auth import set_current_user, user_count
     from ..core.backup import auto_backup_if_due, backup_now
     from .theme import set_theme, stylesheet
     set_theme(settings.get("theme") or "light")
     app.setStyleSheet(stylesheet())
 
+    # automatic backups: a local copy now, an off-PC backup soon after opening and every 2 hours (only if data changed)
+    QTimer.singleShot(1500, lambda: auto_backup_if_due(20))
+    QTimer.singleShot(25_000, lambda: autobackup.run_in_background("open"))
+    backup_timer = QTimer(app)
+    backup_timer.timeout.connect(lambda: autobackup.run_in_background("timer"))
+    backup_timer.start(10 * 60_000)
+
+    from . import tray as traymod
+    from . import update_ui
     from .login import LoginDialog, SetupWizard
+
+    app.setQuitOnLastWindowClosed(False)             # the program decides when to close (tray, Quit, update)
+    app.commitDataRequest.connect(lambda *_: setattr(traymod.life, "quitting", True))   # Windows is shutting down
+    state = {"win": None, "busy": False}
+
+    def quit_app() -> None:
+        traymod.life.quitting = True
+        app.quit()
+
+    def show_main() -> None:
+        """Tray icon, a second start of the program, or a notification: show the window (sign in first)."""
+        win = state["win"]
+        if win is not None:
+            if win.isMinimized():
+                win.showNormal()
+            win.show()
+            win.raise_()
+            win.activateWindow()
+            return
+        if state["busy"]:                            # the sign-in window is already open
+            return
+        state["busy"] = True
+        try:
+            ok = sign_in()
+        finally:
+            state["busy"] = False
+        if ok:
+            open_main()
+        elif not background_on():
+            quit_app()
+
+    tray = traymod.Tray(show_main, quit_app) if traymod.available() else None
+
+    def background_on() -> bool:
+        return tray is not None and bool(settings.get("run_in_background"))
+
+    update_ui.start(tray)                            # update checks run even while the program is in the tray
+    instance.newConnection.connect(lambda: (_drain(instance), QTimer.singleShot(0, show_main)))
 
     def sign_in() -> bool:
         while user_count() == 0:                     # new PC: restore the shop, or start fresh
@@ -151,52 +240,85 @@ def run(argv: list[str] | None = None) -> int:
             app.setStyleSheet(stylesheet())
         return LoginDialog().exec() == QDialog.Accepted
 
-    if not sign_in():
-        return 0
-    QTimer.singleShot(1500, lambda: auto_backup_if_due(20))
-
     from .main_window import MainWindow
-    state = {"win": None}
+
+    def window_closing() -> bool:
+        """The window's X: go to the tray when background mode is on (True); otherwise the program closes."""
+        if background_on():
+            QTimer.singleShot(0, to_tray)
+            return True
+        QTimer.singleShot(0, quit_app)
+        return False
+
+    def to_tray() -> None:
+        set_current_user(None)                       # signed out: opening it again asks for the password
+        close_main()
+        if tray is not None and not settings.get("tray_hint_shown"):
+            settings.set_value("tray_hint_shown", True)
+            tray.notify("SDJ Mobile Care is still running",
+                        "Phones keep syncing and backups continue. To close it fully, right-click this icon → Quit.")
 
     def open_main():
         set_theme(settings.get("theme") or "light")
         app.setStyleSheet(stylesheet())
         win = MainWindow()
         win.logout_requested.connect(on_logout)
+        win.close_to_tray = window_closing
         state["win"] = win
         win.showMaximized()
         try:
-            from .update_ui import start_background_check
-            start_background_check(win)
+            update_ui.set_window(win)
         except Exception:
             log.exception("update check could not start")
 
-    def on_logout():
+    def close_main():
         win = state["win"]
+        state["win"] = None
+        try:
+            update_ui.set_window(None)
+        except Exception:
+            log.exception("update window reset failed")
         if win is not None:
             win.hide()
             win.deleteLater()
-        state["win"] = None
+
+    def on_logout():
+        close_main()
         if sign_in():
             open_main()
-        else:
-            app.quit()
+        elif not background_on():
+            quit_app()
 
-    open_main()
+    if args.background and background_on() and user_count() > 0:
+        log.info("started in the background (tray)")
+    else:
+        if not sign_in():
+            return 0
+        open_main()
 
     def on_quit():
+        traymod.life.quitting = True
+        backup_timer.stop()
         try:
             from ..core.syncserver import service
             service().stop()
         except Exception:
             log.exception("stopping phone sync failed")
-        try:
-            from datetime import datetime, timedelta
-            last = settings.get("last_backup_at") or ""
-            if settings.get("auto_backup") and (not last or datetime.now() - datetime.fromisoformat(last) > timedelta(hours=4)):
-                backup_now("exit")
-        except Exception:
-            log.exception("exit backup failed")
+        if not traymod.life.updating:                # an update already saved a backup just before
+            try:
+                autobackup.run("quit")               # an off-PC backup of today's changes, for the phones
+            except Exception:
+                log.exception("exit off-PC backup failed")
+            try:
+                from datetime import datetime, timedelta
+                last = settings.get("last_backup_at") or ""
+                if settings.get("auto_backup") and (not last or datetime.now() - datetime.fromisoformat(last) > timedelta(hours=4)):
+                    backup_now("exit")
+            except Exception:
+                log.exception("exit backup failed")
+        if tray is not None:
+            tray.hide()
+        instance.close()
         lock.unlock()
 
     app.aboutToQuit.connect(on_quit)

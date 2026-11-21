@@ -383,5 +383,11 @@ class MainWindow(QMainWindow):
         self.logout_requested.emit()
 
     def closeEvent(self, e):  # noqa: N802
+        # Background mode: the window closes to the tray icon (signed out) and the program keeps running for phones.
+        from .tray import life
+        go_tray = getattr(self, "close_to_tray", None)
+        if go_tray is not None and not life.quitting and go_tray():
+            e.ignore()
+            return
         self._header_timer.stop()
         super().closeEvent(e)

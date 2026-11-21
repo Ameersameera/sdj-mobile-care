@@ -3,6 +3,25 @@
 Offline shop software for Windows 10 / 11 (64-bit) and Android: billing, quick sale, stock, purchases, repair jobs,
 customers & dues, expenses, returns, daily closing, reports and accounting.
 
+### What's new in 1.5.2 – fast sync, background, automatic backups
+- Fast sync: on the same Wi-Fi, changes reach the other side in 1–2 seconds. The phone syncs as soon as the app opens,
+  when Wi-Fi comes back, and when the shop PC is switched on.
+- Background: closing the PC window keeps SDJ Mobile Care running as a tray icon (phones keep syncing). It starts with
+  Windows by itself. The phone syncs every 15 minutes even when the app is closed.
+- Automatic backups: a locked backup is made when the PC program opens, every 2 hours (only when something changed)
+  and when it closes. Owner phones get it at the next sync; phones and the 2nd folder keep the newest of each day.
+- Updates from the internet: the phone gets new versions straight from GitHub on any Wi-Fi or mobile data – inside the
+  app, no PC and no browser needed. A notification on the phone and on the PC tells you when an update is ready.
+Recommended: yes
+
+### 1.5.1 → 1.5.2 (Tanglish)
+1. **PC:** popup-la **Update now** (illa `SDJMobileCare_Setup_1.5.2.exe`). Data appadiye irukkum.
+2. **Phone:** popup / "Update ready" → **Update now** → **Install**.
+3. Phone-la first time "Notifications" allow kekkum → **Allow** (update vandhaa sollum).
+4. PC window-la **X** pannaa app close aagaadhu – keezh valadhu moolai-la (tray) icon-aa odum, phones sync aagum.
+   Full-aa close panna: icon → right-click → **Quit**. Windows on aana udane thaanaa background-la start aagum
+   (Settings → Phone link-la off pannalaam).
+
 ### What's new in 1.5.1 – nicer updates
 - **Phone: update popup** – when a new version is ready the phone shows a popup with the size, date and what is new:
   **Update now** or **Later** (asks again tomorrow). A **notification** tells you even when the app is closed (allow
@@ -51,12 +70,12 @@ Recommended: no
 - Dashboard shows where the last backup is; **Backup late** warning after 2 days (phone) / 7 days (2nd folder).
 
 ### Download
-- **SDJMobileCare_Setup_1.5.1.exe** – Windows installer (recommended)
-- **SDJMobileCare-Windows-app-v1.5.1.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
-- **SDJMobileCare-Phone-1.5.1.apk** – Android phone app (Android 8 or newer)
+- **SDJMobileCare_Setup_1.5.2.exe** – Windows installer (recommended)
+- **SDJMobileCare-Windows-app-v1.5.2.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
+- **SDJMobileCare-Phone-1.5.2.apk** – Android phone app (Android 8 or newer)
 
 ### PC + phone update pannradhu eppadi
-1. PC: app-kulla update popup varum (Update now). Illa `SDJMobileCare_Setup_1.5.1.exe` download panni run pannunga. Data appadiye irukkum.
+1. PC: app-kulla update popup varum (Update now). Illa `SDJMobileCare_Setup_1.5.2.exe` download panni run pannunga. Data appadiye irukkum.
 2. Phone: PC update aana pinnaadi phone-la popup / "Update ready" varum (Update now → Install). 1.4.0-la irundhu vandhaa mattum pazhaya app-ai oru dharam uninstall pannanum (mela 1.5.0 steps paarunga).
 
 ### Backup setup – once (5 nimisham)

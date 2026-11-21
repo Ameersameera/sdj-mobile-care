@@ -248,7 +248,7 @@ def install_command(installer: Path) -> list[str]:
 
 def batch_text(installer: Path) -> str:
     """A tiny script: wait a few seconds so this program can close, then run the installer."""
-    return "@echo off\r\nping -n 5 127.0.0.1 >nul\r\n" + subprocess.list2cmdline(install_command(installer)) + "\r\n"
+    return "@echo off\r\nping -n 9 127.0.0.1 >nul\r\n" + subprocess.list2cmdline(install_command(installer)) + "\r\n"
 
 
 def launch_installer(installer: Path) -> None:

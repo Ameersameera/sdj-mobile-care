@@ -8,10 +8,12 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -76,11 +79,11 @@ fun UpdateBanner(ui: Ui) {
                     SmallButton("Update now", { PhoneInstaller.install(ctx, File(u.path))?.let { ui.toast(it) } }, Modifier.fillMaxWidth(), primary = true)
                 }
                 AppUpdate.LOADING -> {
-                    Text("Getting version ${u.version} from the PC…", fontWeight = FontWeight.SemiBold)
-                    Text("Keep the phone on the shop Wi-Fi.", color = Muted, fontSize = 13.sp)
+                    Text("Downloading version ${u.version}…", fontWeight = FontWeight.SemiBold)
+                    Text("Keep the phone connected to the internet or the shop Wi-Fi.", color = Muted, fontSize = 13.sp)
                 }
                 else -> {
-                    Text("Update ${u.version} is waiting on the PC", fontWeight = FontWeight.SemiBold)
+                    Text("Update ${u.version} is not downloaded yet", fontWeight = FontWeight.SemiBold)
                     Text(u.error, color = Warn, fontSize = 13.sp)
                 }
             }
@@ -102,15 +105,7 @@ fun UpdatePopup(ui: Ui, pending: Int) {
     var hidden by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     val u = up
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val show = u != null && u.state == AppUpdate.READY && !hidden && !ui.repo.updateSnoozed()
-    LaunchedEffect(show) {
-        // once: allow notifications, so "new version ready" can arrive even when the app is closed
-        if (show && android.os.Build.VERSION.SDK_INT >= 33 && !UpdateNotice.allowed(ctx) && !ui.repo.notifAsked()) {
-            ui.repo.setNotifAsked()
-            ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
     if (!show || u == null) return
     AlertDialog(
         onDismissRequest = { hidden = true },
@@ -152,12 +147,32 @@ fun WhatsNewPopup(ui: Ui) {
 @Composable
 fun UpdateHistorySection(ui: Ui) {
     val hist = ui.repo.updateHistory()
+    var mobile by remember { mutableStateOf(ui.repo.updatesOnMobileData()) }
     Section("App version") {
         Text("Version ${ui.repo.version}", fontWeight = FontWeight.SemiBold)
+        Text("New versions come straight from the internet (any Wi-Fi or mobile data), or from the shop PC.", color = Muted, fontSize = 13.sp)
+        SmallButton("Check for updates", { ui.run { ui.repo.checkOnline(force = true).takeIf { it.isNotBlank() }?.let { ui.toast(it) } } }, Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = mobile, onCheckedChange = { on -> mobile = on; ui.run { ui.repo.setUpdatesOnMobileData(on) } })
+            Text("  Download updates on mobile data too (about 8 MB)", fontSize = 13.sp)
+        }
         if (hist.isEmpty()) Text("No updates yet.", color = Muted, fontSize = 13.sp)
         hist.forEach { h ->
             Text("• ${h.version}" + if (h.date.length >= 10) " · ${h.date.take(10)}" else "", fontSize = 14.sp)
             if (h.notes.isNotBlank()) Text(h.notes.lines().take(4).joinToString("\n"), color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+/** Once: lets the phone show "new version ready" even when the app is closed (Android 13+ asks the person). */
+@Composable
+fun AskNotificationsOnce(ui: Ui) {
+    val ctx = LocalContext.current
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && Build.FINGERPRINT != "robolectric" && !UpdateNotice.allowed(ctx) && !ui.repo.notifAsked()) {
+            ui.repo.setNotifAsked()
+            runCatching { ask.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
         }
     }
 }

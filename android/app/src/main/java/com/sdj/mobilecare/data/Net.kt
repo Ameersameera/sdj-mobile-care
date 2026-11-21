@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -14,6 +15,7 @@ import java.net.DatagramSocket
 import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.nio.ByteBuffer
@@ -62,11 +64,13 @@ class Store(val dir: File) {
 
 class PcError(message: String, val code: String = "error", val status: Int = 0) : Exception(message)
 
-/** Talks to the PC on the shop Wi-Fi only (no internet). */
+/** Talks to the PC on the shop Wi-Fi (no internet), and to GitHub for app updates (internet). */
 open class Net(private val context: Context?) {
     companion object {
         const val PORT = 47810
         const val UDP_PORT = 47811
+        const val ANNOUNCE_PORT = 47812
+        private const val UA = "SDJMobileCare-Phone"
     }
 
     /** The Wi-Fi network, so the PC is reached over Wi-Fi even when mobile data is the phone's default. */
@@ -127,7 +131,8 @@ open class Net(private val context: Context?) {
 
     open fun post(host: String, port: Int, path: String, body: JSONObject, readTimeoutMs: Int = 60_000): JSONObject {
         val bytes = body.toString().toByteArray(Charsets.UTF_8)
-        return viaRoutes(URL("http://$host:$port$path"), 3500, readTimeoutMs, "POST", "application/json") { conn ->
+        val connectMs = if (path == "/sdj/sync" || path == "/sdj/wait") 2000 else 3500
+        return viaRoutes(URL("http://$host:$port$path"), connectMs, readTimeoutMs, "POST", "application/json") { conn ->
             conn.outputStream.use { it.write(bytes) }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.use { String(it.readBytes(), Charsets.UTF_8) } ?: ""
@@ -178,6 +183,114 @@ open class Net(private val context: Context?) {
             if (code !in 200..299) fail(conn, code)
             JSONObject(conn.inputStream.use { String(it.readBytes(), Charsets.UTF_8) })
         }
+
+    /**
+     * Listens for "the PC just started" (UDP [ANNOUNCE_PORT]) while [keepGoing] says so, and calls [heard] for our PC.
+     * Lets an open app sync at once when the shop PC is switched on, instead of waiting for its next try.
+     */
+    open fun listenForPc(pcId: String, keepGoing: () -> Boolean, heard: () -> Unit) {
+        val sock = try {
+            DatagramSocket(null).apply {
+                reuseAddress = true
+                broadcast = true
+                soTimeout = 1000
+                bind(InetSocketAddress(ANNOUNCE_PORT))
+            }
+        } catch (e: Exception) {
+            return                                  // port busy: the quick retries still find the PC
+        }
+        sock.use {
+            val buf = ByteArray(512)
+            while (keepGoing()) {
+                try {
+                    val p = DatagramPacket(buf, buf.size)
+                    it.receive(p)
+                    val s = String(p.data, 0, p.length, Charsets.US_ASCII)
+                    if (s.startsWith("SDJ+") && (pcId.isEmpty() || s.substring(4).trim() == pcId)) heard()
+                } catch (e: SocketTimeoutException) {
+                    // check keepGoing again
+                } catch (e: Exception) {
+                    return
+                }
+            }
+        }
+    }
+
+    /** Calls [up] whenever a Wi-Fi network becomes available; returns a function that stops watching. */
+    open fun watchWifi(up: () -> Unit): () -> Unit {
+        val cm = context?.getSystemService(ConnectivityManager::class.java) ?: return fun() {}
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = up()
+        }
+        val none: () -> Unit = {}
+        return try {
+            cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), cb)
+            val stop: () -> Unit = { runCatching { cm.unregisterNetworkCallback(cb) } }
+            stop
+        } catch (e: Exception) {
+            none
+        }
+    }
+
+    // ---------------------------------------------------------------- internet (app updates from GitHub)
+    /** Reads a JSON answer from GitHub (any Wi-Fi or mobile data – not the shop PC). */
+    open fun webJson(url: String): JSONObject {
+        if (!GitHubRelease.okUrl(url)) throw IOException("Only GitHub addresses are used for updates.")
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 15_000
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        conn.setRequestProperty("User-Agent", UA)
+        try {
+            val code = conn.responseCode
+            if (code != 200) throw IOException("GitHub answered $code")
+            return JSONObject(conn.inputStream.use { String(it.readBytes(), Charsets.UTF_8) })
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Downloads a file from GitHub into [dest] (every redirect must stay on GitHub); returns its SHA-256. */
+    open fun webDownload(url: String, dest: File, maxBytes: Long): String {
+        var u = URL(url)
+        var hops = 0
+        while (true) {
+            if (!GitHubRelease.okUrl(u.toString())) throw IOException("The update link is not a GitHub address.")
+            val conn = u.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = false
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            conn.setRequestProperty("User-Agent", UA)
+            try {
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val loc = conn.getHeaderField("Location") ?: throw IOException("Bad redirect from GitHub")
+                    u = URL(u, loc)
+                    if (++hops > 5) throw IOException("Too many redirects")
+                    continue
+                }
+                if (code != 200) throw IOException("Download failed ($code)")
+                val md = MessageDigest.getInstance("SHA-256")
+                var total = 0L
+                conn.inputStream.use { ins ->
+                    dest.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > maxBytes) throw IOException("The update file is too big")
+                            md.update(buf, 0, n)
+                            out.write(buf, 0, n)
+                        }
+                    }
+                }
+                return md.digest().joinToString("") { "%02x".format(it) }
+            } finally {
+                conn.disconnect()
+            }
+        }
+    }
 
     /** True on Wi-Fi (or another network that is not charged by the MB). */
     open fun unmetered(): Boolean {
