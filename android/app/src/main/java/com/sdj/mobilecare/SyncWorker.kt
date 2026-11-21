@@ -21,6 +21,7 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         try {
             if (!app.repo.state.value.ready) app.repo.load()
             app.repo.syncOnce()
+            app.repo.takeUpdateNotice()?.let { UpdateNotice.show(applicationContext, it) }
         } catch (e: Exception) {
             // not at the shop / PC off: the next run tries again
         }

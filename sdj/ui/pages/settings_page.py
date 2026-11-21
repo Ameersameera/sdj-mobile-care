@@ -765,7 +765,8 @@ class SettingsPage(Page):
         self.update_auto.setChecked(bool(settings.get("update_auto_check")))
         self.update_auto.toggled.connect(lambda on: settings.set_value("update_auto_check", bool(on)))
         u.add(self.update_auto)
-        u.add(hbox(button("Check for updates", "primary", "download", self.check_updates), None))
+        u.add(hbox(button("Check for updates", "primary", "download", self.check_updates),
+                   button("Update history", "ghost", None, self.show_update_history), None))
         self._show_update_status()
 
     def _show_update_status(self):
@@ -774,6 +775,10 @@ class SettingsPage(Page):
         when_ = dt(last) if last else "never"
         extra = "" if can_self_install() else "\n(This copy cannot install updates by itself; it will open the download page.)"
         self.update_status.setText(f"You have version {APP_VERSION}. Last checked: {when_}.{extra}")
+
+    def show_update_history(self):
+        from ..update_ui import HistoryDialog
+        HistoryDialog(self).exec()
 
     def check_updates(self):
         from .. import update_ui

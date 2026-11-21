@@ -23,7 +23,20 @@ def _is_owner() -> bool:
     return bool(u is not None and getattr(u, "role", "") == "ADMIN")
 
 
+def _size_text(n: int) -> str:
+    return f"{n / 1_048_576:.0f} MB" if n else ""
+
+
+def _nice_date(d: str) -> str:
+    try:
+        from datetime import date
+        return date.fromisoformat(d[:10]).strftime("%d %b %Y")
+    except ValueError:
+        return d
+
+
 class _Bridge(QObject):
+    whats_new = Signal(dict)
     checked = Signal(dict, bool)         # result, manual
     progress = Signal(int, int)
     failed = Signal(str)
@@ -44,7 +57,15 @@ class UpdateDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         lay.addWidget(label(f"SDJ Mobile Care {latest['version']} is ready", "SectionTitle"))
-        lay.addWidget(label(f"You have version {APP_VERSION}.", "Muted"))
+        bits = [f"You have version {APP_VERSION}"]
+        size = _size_text((latest.get("setup") or {}).get("size") or 0)
+        if size:
+            bits.append(size)
+        if latest.get("date"):
+            bits.append(_nice_date(latest["date"]))
+        lay.addWidget(label(" · ".join(bits), "Muted"))
+        if latest.get("recommended"):
+            lay.addWidget(label("★ Recommended update", "SectionHint"))
         notes = QTextBrowser()
         notes.setOpenLinks(False)
         notes.setPlainText(self._notes(latest.get("notes") or ""))
@@ -62,7 +83,7 @@ class UpdateDialog(QDialog):
                             "Muted", wrap=True))
         row = QHBoxLayout()
         self.skip_btn = button("Skip this version", "ghost", None, self._skip)
-        self.later_btn = button("Later", "", None, self.reject)
+        self.later_btn = button("Later (remind tomorrow)", "", None, self._later)
         self.go_btn = button("Update now" if can else "Open download page", "primary", "download", self._go)
         row.addWidget(self.skip_btn)
         row.addStretch(1)
@@ -78,6 +99,10 @@ class UpdateDialog(QDialog):
     def _notes(text: str) -> str:
         text = text.strip() or "A new version of SDJ Mobile Care is available."
         return text[:4000]
+
+    def _later(self):
+        updater.snooze(1)
+        self.reject()
 
     def _skip(self):
         settings.set_value("update_skip_version", self.latest["version"])
@@ -125,6 +150,7 @@ class UpdateDialog(QDialog):
         self.bar.setRange(0, 0)
         try:
             from pathlib import Path
+            updater.remember_for_next_start(self.latest)          # the new program shows "What's new"
             updater.launch_installer(Path(path))
         except Exception as exc:
             self._on_failed(str(exc))
@@ -146,7 +172,11 @@ class UpdateController(QObject):
         self.window = parent_window
         self.bridge = _Bridge()
         self.bridge.checked.connect(self._on_checked)
+        self.bridge.whats_new.connect(self._show_whats_new)
         self._running = False
+
+    def _show_whats_new(self, entry: dict):
+        WhatsNewDialog(entry, self.window).exec()
 
     def check(self, manual: bool = False) -> None:
         if self._running:
@@ -175,7 +205,7 @@ class UpdateController(QObject):
                     info(self.window, "Update available",
                          f"Version {latest['version']} is available. Ask the owner to update the program.")
                 return
-            if not manual and settings.get("update_skip_version") == latest["version"]:
+            if not manual and (settings.get("update_skip_version") == latest["version"] or updater.snoozed()):
                 return
             UpdateDialog(latest, self.window).exec()
         elif manual:
@@ -186,6 +216,47 @@ class UpdateController(QObject):
                      "The update check needs internet on this PC. Please check the connection and try again.")
 
 
+class WhatsNewDialog(QDialog):
+    """Shown once after the program was updated: what changed in this version."""
+
+    def __init__(self, entry: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("What's new")
+        self.setMinimumWidth(480)
+        lay = QVBoxLayout(self)
+        lay.addWidget(label(f"✔ Updated to version {entry['version']}", "SectionTitle"))
+        if entry.get("date"):
+            lay.addWidget(label(_nice_date(entry["date"]), "Muted"))
+        box = QTextBrowser()
+        box.setPlainText(entry.get("notes") or "The program was updated. Your shop data is as it was.")
+        box.setMinimumHeight(180)
+        lay.addWidget(box, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("Got it", "primary", None, self.accept))
+        lay.addLayout(row)
+
+
+class HistoryDialog(QDialog):
+    """Settings → About → Update history."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Update history")
+        self.setMinimumSize(520, 420)
+        lay = QVBoxLayout(self)
+        hist = updater.update_history()
+        text = "\n\n".join(f"Version {h['version']}  ·  {_nice_date(h.get('date') or '')}\n{h.get('notes') or ''}".strip()
+                            for h in hist) or f"No updates yet. You have version {APP_VERSION}."
+        box = QTextBrowser()
+        box.setPlainText(text)
+        lay.addWidget(box, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("Close", "", None, self.accept))
+        lay.addLayout(row)
+
+
 _controller: UpdateController | None = None
 
 
@@ -193,6 +264,15 @@ def start_background_check(window) -> None:
     """Called once the main window is open: a quiet check a few seconds later (at most every 12 hours)."""
     global _controller
     _controller = UpdateController(window)
+
+    def _wn():
+        try:
+            e = updater.take_whats_new()
+            if e:
+                _controller.bridge.whats_new.emit(e)
+        except Exception:
+            log.exception("what's new failed")
+    threading.Thread(target=_wn, daemon=True).start()
     if updater.should_check_now():
         QTimer.singleShot(8000, lambda: _controller.check(False))
     else:

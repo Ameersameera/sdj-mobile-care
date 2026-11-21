@@ -69,6 +69,8 @@ fun HomeScreen(ui: Ui, st: UiState, nav: Nav) {
     val bs by ui.repo.backups.state.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         UpdateBanner(ui)
+        UpdatePopup(ui, st.pending.size)
+        WhatsNewPopup(ui)
         SyncSummary(st) { nav.go(Route.Sync) }
         if (u?.role == "ADMIN" || bs.items.isNotEmpty()) {
             val (line, ok) = backupLine(bs)
@@ -342,6 +344,7 @@ fun SyncScreen(ui: Ui, st: UiState) {
         if (st.notices.isNotEmpty()) Section("Messages", trailing = { TextButton(onClick = { ui.run { ui.repo.clearNotices() } }) { Text("Clear", color = Info) } }) {
             st.notices.forEach { Text("• $it", fontSize = 13.sp) }
         }
+        UpdateHistorySection(ui)
         Section("Unlink") {
             Text("Use only if this phone will no longer be used for the shop. Entries not synced yet are lost.", color = Muted, fontSize = 13.sp)
             OutlinedButton(onClick = { unlink = true }) { Text("Unlink this phone", color = Bad) }

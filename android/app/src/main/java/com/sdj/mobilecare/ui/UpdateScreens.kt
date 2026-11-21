@@ -9,16 +9,27 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
+import com.sdj.mobilecare.UpdateNotice
 import com.sdj.mobilecare.data.AppUpdate
 import java.io.File
 
@@ -73,6 +84,80 @@ fun UpdateBanner(ui: Ui) {
                     Text(u.error, color = Warn, fontSize = 13.sp)
                 }
             }
+        }
+    }
+}
+
+private fun meta(u: AppUpdate): String {
+    val bits = mutableListOf<String>()
+    if (u.size > 0) bits += "%.0f MB".format(u.size / 1048576.0)
+    if (u.date.length >= 10) bits += u.date.take(10)
+    return bits.joinToString(" · ")
+}
+
+/** Popup when a new version is ready on the phone: what's new, Update now / Later (asks again tomorrow). */
+@Composable
+fun UpdatePopup(ui: Ui, pending: Int) {
+    val up by ui.repo.update.collectAsState()
+    var hidden by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
+    val u = up
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val show = u != null && u.state == AppUpdate.READY && !hidden && !ui.repo.updateSnoozed()
+    LaunchedEffect(show) {
+        // once: allow notifications, so "new version ready" can arrive even when the app is closed
+        if (show && android.os.Build.VERSION.SDK_INT >= 33 && !UpdateNotice.allowed(ctx) && !ui.repo.notifAsked()) {
+            ui.repo.setNotifAsked()
+            ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    if (!show || u == null) return
+    AlertDialog(
+        onDismissRequest = { hidden = true },
+        title = { Text("Version ${u.version} is ready") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val m = meta(u)
+                if (m.isNotBlank()) Text(m, color = Muted, fontSize = 13.sp)
+                if (u.recommended) Text("★ Recommended update", color = Warn, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                if (u.notes.isNotBlank()) Text(u.notes, fontSize = 14.sp)
+                Text("Your data and entries stay as they are.", color = Muted, fontSize = 13.sp)
+                if (pending > 0) Text("$pending entr${if (pending == 1) "y is" else "ies are"} not synced yet. They stay safe, but sync with the PC first if you can.", color = Warn, fontSize = 13.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { hidden = true; PhoneInstaller.install(ctx, File(u.path))?.let { ui.toast(it) } }) { Text("Update now", color = Info) } },
+        dismissButton = { TextButton(onClick = { hidden = true; ui.run { ui.repo.snoozeUpdate() } }) { Text("Later") } },
+    )
+}
+
+/** Shown once, the first time the app opens after an update. */
+@Composable
+fun WhatsNewPopup(ui: Ui) {
+    val w by ui.repo.whatsNew.collectAsState()
+    val n = w ?: return
+    AlertDialog(
+        onDismissRequest = { ui.repo.dismissWhatsNew() },
+        title = { Text("✔ Updated to version ${n.version}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (n.date.length >= 10) Text(n.date.take(10), color = Muted, fontSize = 13.sp)
+                Text(n.notes.ifBlank { "The app was updated. Your data is as it was." }, fontSize = 14.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { ui.repo.dismissWhatsNew() }) { Text("Got it", color = Info) } },
+    )
+}
+
+/** Sync screen: this app's version and the update history. */
+@Composable
+fun UpdateHistorySection(ui: Ui) {
+    val hist = ui.repo.updateHistory()
+    Section("App version") {
+        Text("Version ${ui.repo.version}", fontWeight = FontWeight.SemiBold)
+        if (hist.isEmpty()) Text("No updates yet.", color = Muted, fontSize = 13.sp)
+        hist.forEach { h ->
+            Text("• ${h.version}" + if (h.date.length >= 10) " · ${h.date.take(10)}" else "", fontSize = 14.sp)
+            if (h.notes.isNotBlank()) Text(h.notes.lines().take(4).joinToString("\n"), color = Muted, fontSize = 12.sp)
         }
     }
 }

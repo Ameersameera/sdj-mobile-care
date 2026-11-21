@@ -1,7 +1,10 @@
 package com.sdj.mobilecare.data
 
 /** A newer phone app offered by the PC. [state] is READY once the file is on this phone and checked. */
-data class AppUpdate(val version: String, val size: Long, val sha: String, val state: String, val error: String = "", val path: String = "") {
+data class AppUpdate(
+    val version: String, val size: Long, val sha: String, val state: String, val error: String = "", val path: String = "",
+    val notes: String = "", val date: String = "", val recommended: Boolean = false,
+) {
     companion object {
         const val READY = "READY"
         const val LOADING = "LOADING"
@@ -19,4 +22,13 @@ fun isNewerVersion(a: String, b: String): Boolean {
     val y = parts(b)
     for (i in 0 until 4) if (x[i] != y[i]) return x[i] > y[i]
     return false
+}
+
+/** "What's new" for one version, shown once after the update and kept in the update history. */
+data class WhatsNew(val version: String, val notes: String, val date: String) {
+    fun toJson(): org.json.JSONObject = org.json.JSONObject().put("version", version).put("notes", notes).put("date", date)
+
+    companion object {
+        fun of(j: org.json.JSONObject) = WhatsNew(j.optString("version"), j.optString("notes"), j.optString("date"))
+    }
 }
