@@ -59,17 +59,29 @@ def make_product(db, cat):
     return _make
 
 
-# On the CI runners Qt sometimes crashes while Python shuts down AFTER every test has passed, which turned a green run
-# red (exit code 1). The result is already known then, so on CI the process ends with it right after pytest's summary.
-_final = {"code": None}
+# Qt can crash while Python shuts down AFTER every test passed (seen on the Windows runner: all tests green, exit code 1).
+# Cause: the QApplication and its windows are still alive when the interpreter tears everything down. So when the
+# test session ends, close the windows and delete the QApplication in the proper order, while Python is still healthy.
+def _shutdown_qt() -> None:
+    try:
+        import shiboken6
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return
+        for w in app.topLevelWidgets():
+            w.close()
+            w.deleteLater()
+        app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents()
+        shiboken6.delete(app)
+    except Exception:           # never turn a green run red because of the tidy-up itself
+        pass
 
 
 def pytest_sessionfinish(session, exitstatus):
-    _final["code"] = int(exitstatus)
-
-
-def pytest_unconfigure(config):
-    if os.environ.get("CI") and _final["code"] is not None:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(_final["code"])
+    import gc
+    _shutdown_qt()
+    gc.collect()
