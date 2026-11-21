@@ -3,6 +3,16 @@
 Offline shop software for Windows 10 / 11 (64-bit) and Android: billing, quick sale, stock, purchases, repair jobs,
 customers & dues, expenses, returns, daily closing, reports and accounting.
 
+### What's new in 1.5.1 – nicer updates
+- **Phone: update popup** – when a new version is ready the phone shows a popup with the size, date and what is new:
+  **Update now** or **Later** (asks again tomorrow). A **notification** tells you even when the app is closed (allow
+  notifications once). If entries are not synced yet, the popup says so.
+- **What's new card** – the first time the app opens after an update (PC and phone) it shows what changed in that version
+  only. *Settings → About → Update history* (PC) and the **Sync** screen (phone) keep the list.
+- **PC popup** – shows size, date, a **Recommended** tag for important updates, **Later** (remind tomorrow) and
+  **Skip this version**; release notes now show only the new version.
+Recommended: no
+
 ### What's new in 1.5.0 – update from inside the app
 - **PC** – when the program opens (internet needed), it checks GitHub for a newer version. A popup shows *what's new*
   with **Update now / Later / Skip this version**. *Update now* downloads the new version, checks it is untouched
@@ -41,13 +51,13 @@ customers & dues, expenses, returns, daily closing, reports and accounting.
 - Dashboard shows where the last backup is; **Backup late** warning after 2 days (phone) / 7 days (2nd folder).
 
 ### Download
-- **SDJMobileCare_Setup_1.5.0.exe** – Windows installer (recommended)
-- **SDJMobileCare-Windows-app-v1.5.0.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
-- **SDJMobileCare-Phone-1.5.0.apk** – Android phone app (Android 8 or newer)
+- **SDJMobileCare_Setup_1.5.1.exe** – Windows installer (recommended)
+- **SDJMobileCare-Windows-app-v1.5.1.zip** – portable Windows version (extract and run `SDJMobileCare.exe`)
+- **SDJMobileCare-Phone-1.5.1.apk** – Android phone app (Android 8 or newer)
 
 ### PC + phone update pannradhu eppadi
-1. PC: `SDJMobileCare_Setup_1.5.0.exe` download panni run pannunga (app-ai close pannitu). Data appadiye irukkum.
-2. Phone: `SDJMobileCare-Phone-1.5.0.apk` install pannunga (first time key maariyadhaala pazhaya app-ai uninstall pannanum – mela paarunga).
+1. PC: app-kulla update popup varum (Update now). Illa `SDJMobileCare_Setup_1.5.1.exe` download panni run pannunga. Data appadiye irukkum.
+2. Phone: PC update aana pinnaadi phone-la popup / "Update ready" varum (Update now → Install). 1.4.0-la irundhu vandhaa mattum pazhaya app-ai oru dharam uninstall pannanum (mela 1.5.0 steps paarunga).
 
 ### Backup setup – once (5 nimisham)
 1. PC: **Settings → Backup → Create recovery code…** → password → code-ai **Print** panni safe-aa vechukonga

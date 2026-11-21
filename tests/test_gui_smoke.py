@@ -602,3 +602,34 @@ def test_update_popup_and_settings_check(gui, tmp_path, monkeypatch):
     assert shown == ["9.9.9"]
     ctl._on_checked(dict(state="new", latest=latest), True)           # …but Check for updates still shows it
     assert shown == ["9.9.9", "9.9.9"]
+
+
+def test_whats_new_card_history_and_later(gui, monkeypatch):
+    win, msgs, app = gui
+    from PySide6.QtWidgets import QTextBrowser
+    from sdj.core import updater
+    from sdj.ui import update_ui
+    entry = dict(version="9.9.9", notes="- Popup on the phone", date="2026-11-25")
+    dlg = update_ui.WhatsNewDialog(entry)
+    assert "9.9.9" in dlg.windowTitle() or dlg.findChild(QTextBrowser).toPlainText().startswith("- Popup")
+    settings.set_value("update_history", [entry])
+    hist = update_ui.HistoryDialog()
+    assert "Version 9.9.9" in hist.findChild(QTextBrowser).toPlainText()
+    latest = dict(version="9.9.9", tag="v9.9.9", notes="- Popup", page="https://github.com/x/y", date="2026-11-25",
+                  recommended=True, setup=dict(name="SDJMobileCare_Setup_9.9.9.exe", url="https://github.com/x", size=62_000_000, sha="a" * 64),
+                  apk=None)
+    pop = update_ui.UpdateDialog(latest)
+    labels = " ".join(w.text() for w in pop.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
+    assert "59 MB" in labels and "25 Nov 2026" in labels and "Recommended" in labels
+    pop._later()
+    assert updater.snoozed()
+    shown = []
+    monkeypatch.setattr(update_ui.UpdateDialog, "exec", lambda self: shown.append(1) or 0)
+    ctl = update_ui.UpdateController(win)
+    ctl._on_checked(dict(state="new", latest=latest), False)          # snoozed: no quiet popup
+    assert shown == []
+    ctl._on_checked(dict(state="new", latest=latest), True)           # but Check for updates still shows it
+    assert shown == [1]
+    for w in (dlg, hist, pop):                                        # parent-less widgets: delete them before Qt shuts down
+        w.deleteLater()
+    app.processEvents()

@@ -105,6 +105,10 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     private val _update = MutableStateFlow<AppUpdate?>(null)
     /** A newer phone app that the PC offered (and this phone has downloaded from it over the shop Wi-Fi). */
     val update: StateFlow<AppUpdate?> = _update
+    private val _whatsNew = MutableStateFlow<WhatsNew?>(null)
+    /** Set once, right after the app was updated: what is new in this version. */
+    val whatsNew: StateFlow<WhatsNew?> = _whatsNew
+    val version: String get() = appVersion
 
     private var shop: Shop? = null
     private var categories = emptyList<Category>()
@@ -129,9 +133,68 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
     suspend fun load() = mutex.withLock {
         withContext(io) { DATASETS.forEach { parse(it, store.data(it)) } }
         backups.refresh()
+        checkWhatsNew()
         if (cfg.bool("stay")) signedIn = users.firstOrNull { it.id == cfg.lng("signed_user") && it.id == shop?.userId }
         sync = sync.copy(lastOk = cfg.str("last_sync"), host = cfg.str("last_host"))
         publish(ready = true)
+    }
+
+    /** The first start of a NEW version shows "What's new" once (the first ever start shows nothing). */
+    private fun checkWhatsNew() {
+        val seen = cfg.str("seen_version")
+        if (seen == appVersion) return
+        cfg.put("seen_version", appVersion)
+        val next = cfg.obj("whats_new_next")
+        val entry = when {
+            next.str("version") == appVersion -> WhatsNew(appVersion, next.str("notes"), next.str("date"))
+            seen.isNotEmpty() -> WhatsNew(appVersion, "", "")
+            else -> null
+        }
+        if (entry != null) {
+            val hist = JSONArray().put(entry.toJson())
+            val old = cfg.arr("history")
+            for (i in 0 until old.length()) {
+                val o = old.optJSONObject(i) ?: continue
+                if (o.str("version") != appVersion && hist.length() < 20) hist.put(o)
+            }
+            cfg.put("history", hist)
+            cfg.put("whats_new_next", JSONObject())
+            _whatsNew.value = entry
+        }
+        store.saveConfig()
+    }
+
+    fun dismissWhatsNew() { _whatsNew.value = null }
+
+    fun updateHistory(): List<WhatsNew> = cfg.arr("history").let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(WhatsNew::of) } }
+
+    /** "Later" on the update popup: ask again tomorrow. */
+    suspend fun snoozeUpdate(hours: Long = 24) = mutex.withLock {
+        cfg.put("update_snooze_until", System.currentTimeMillis() + hours * 3_600_000L)
+        store.saveConfig()
+    }
+
+    fun updateSnoozed(): Boolean = cfg.lng("update_snooze_until") > System.currentTimeMillis()
+
+    /** An update that is ready and has not been announced by a notification yet (the background sync calls this). */
+    suspend fun takeUpdateNotice(): AppUpdate? = mutex.withLock {
+        val u = _update.value
+        if (u != null && u.state == AppUpdate.READY && cfg.str("notified_version") != u.version) {
+            cfg.put("notified_version", u.version)
+            store.saveConfig()
+            u
+        } else null
+    }
+
+    fun notifAsked(): Boolean = cfg.bool("notif_asked")
+    suspend fun setNotifAsked() = mutex.withLock { cfg.put("notif_asked", true); store.saveConfig() }
+
+    private suspend fun readyUpdate(u: AppUpdate) {
+        mutex.withLock {
+            cfg.put("whats_new_next", JSONObject().put("version", u.version).put("notes", u.notes).put("date", u.date))
+            store.saveConfig()
+        }
+        _update.value = u
     }
 
     private fun parse(name: String, text: String?) {
@@ -963,6 +1026,9 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         val ver = meta?.str("version").orEmpty()
         val sha = meta?.str("sha").orEmpty().lowercase()
         val size = meta?.lng("size") ?: 0L
+        val notes = meta?.str("notes").orEmpty()
+        val date = meta?.str("date").orEmpty()
+        val rec = meta?.bool("recommended") ?: false
         if (meta == null || !isNewerVersion(ver, appVersion) || sha.length != 64 || size !in 1..MAX_APK) {
             if (_update.value != null) _update.value = null
             withContext(io) { dir.listFiles()?.forEach { it.delete() } }       // installed already: tidy up
@@ -971,10 +1037,10 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
         val dest = File(dir, "SDJMobileCare-Phone-$ver.apk")
         val have = withContext(io) { dest.exists() && dest.inputStream().use { Backups.sha256(it).second } == sha }
         if (have) {
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath)
+            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
             return
         }
-        _update.value = AppUpdate(ver, size, sha, AppUpdate.LOADING)
+        _update.value = AppUpdate(ver, size, sha, AppUpdate.LOADING, notes = notes, date = date, recommended = rec)
         val tmp = File(dir.apply { mkdirs() }, "apk.part")
         try {
             val seq = mutex.withLock {
@@ -990,12 +1056,12 @@ class Repo(private val store: Store, private val net: Net, private val io: Corou
                 dir.listFiles()?.forEach { if (it != tmp) it.delete() }
                 if (!tmp.renameTo(dest)) throw IOException("the update file could not be saved")
             }
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath)
+            readyUpdate(AppUpdate(ver, size, sha, AppUpdate.READY, path = dest.absolutePath, notes = notes, date = date, recommended = rec))
         } catch (e: PcError) {
             if (e.code == "replay") mutex.withLock { cfg.put("seq", cfg.optLong("seq", 0) + 1000); store.saveConfig() }
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = e.message ?: "The PC did not send the update.")
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = e.message ?: "The PC did not send the update.", notes = notes, date = date, recommended = rec)
         } catch (e: Exception) {
-            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = "Update not downloaded yet (${e.message}) – it is tried again at the next sync.")
+            _update.value = AppUpdate(ver, size, sha, AppUpdate.FAILED, error = "Update not downloaded yet (${e.message}) – it is tried again at the next sync.", notes = notes, date = date, recommended = rec)
         } finally {
             tmp.delete()
         }

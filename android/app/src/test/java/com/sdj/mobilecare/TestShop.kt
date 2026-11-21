@@ -34,7 +34,7 @@ class OfflineNet : Net(null) {
 }
 
 /** A phone linked to the fixture shop with the PC's full data already downloaded. */
-fun testRepo(dir: File, net: Net = OfflineNet(), backups: Backups? = null): Repo {
+fun testRepo(dir: File, net: Net = OfflineNet(), backups: Backups? = null, version: String = "test"): Repo {
     val store = Store(dir)
     val dev = Fixtures.json("device.json")
     store.config.put("device", dev.getString("device")).put("key", dev.getString("key")).put("no", dev.getInt("no"))
@@ -44,8 +44,8 @@ fun testRepo(dir: File, net: Net = OfflineNet(), backups: Backups? = null): Repo
     store.saveConfig()
     val data = Fixtures.json("sync_full.json").getJSONObject("data")
     data.keys().forEach { k -> store.putData(k, data.get(k).toString()) }
-    return if (backups != null) Repo(store, net, Dispatchers.Unconfined, "test", backups)
-    else Repo(store, net, Dispatchers.Unconfined, "test")
+    return if (backups != null) Repo(store, net, Dispatchers.Unconfined, version, backups)
+    else Repo(store, net, Dispatchers.Unconfined, version)
 }
 
 /** The same kinds of entries a shop makes on the phone during a day away from the Wi-Fi. */

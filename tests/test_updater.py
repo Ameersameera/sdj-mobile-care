@@ -93,10 +93,13 @@ class _Files(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def web(monkeypatch):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Files)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
     monkeypatch.setattr(updater, "_check_url", lambda url: None)
     yield f"http://127.0.0.1:{srv.server_address[1]}/"
     srv.shutdown()
+    srv.server_close()
+    th.join(5)
 
 
 def test_download_verifies_checksum(db, web, tmp_path):
@@ -238,3 +241,86 @@ def test_stage_phone_apk_without_internet_is_quiet(db, monkeypatch):
         raise OSError("no internet")
     monkeypatch.setattr(updater, "_get_json", boom)
     assert updater.stage_phone_apk() is False
+
+
+# ---------------------------------------------------------------- v1.5.1: notes, Later, What's new
+BODY = """## SDJ Mobile Care
+
+### What's new in 1.5.1 – nicer updates
+- **Popup** on the phone
+Recommended: yes
+
+### What's new in 1.5.0 – update from inside the app
+- old stuff
+
+### Download
+- files
+"""
+
+
+def test_only_this_versions_notes_are_shown():
+    n = updater.section_notes(BODY, "1.5.1")
+    assert "Popup" in n and "old stuff" not in n and "files" not in n
+    assert updater.is_recommended(n)
+    plain = updater.clean_notes(n)
+    assert "**" not in plain and "Recommended" not in plain and "Popup" in plain
+    assert "old stuff" in updater.section_notes(BODY, "1.5.0") and not updater.is_recommended(updater.section_notes(BODY, "1.5.0"))
+    assert updater.section_notes("just text", "9.9") == "just text"      # no headings: show it as it is
+
+
+def test_release_description_carries_notes_date_and_recommended(monkeypatch):
+    rel = release("9.9.9")
+    rel["body"] = BODY.replace("1.5.1", "9.9.9")
+    rel["published_at"] = "2026-11-25T10:00:00Z"
+    monkeypatch.setattr(updater, "_get_json", lambda url, timeout=10: rel)
+    info = updater.fetch_latest()
+    assert info["recommended"] and info["date"] == "2026-11-25" and "Popup" in info["notes"] and "old stuff" not in info["notes"]
+
+
+def test_later_snoozes_the_popup_for_a_day(db):
+    from datetime import datetime, timedelta
+    assert not updater.snoozed()
+    updater.snooze(1)
+    assert updater.snoozed()
+    settings.set_value("update_snooze_until", (datetime.now() - timedelta(minutes=1)).isoformat())
+    assert not updater.snoozed()
+
+
+def test_whats_new_shows_once_after_an_update_and_fills_the_history(db):
+    assert updater.take_whats_new(fetch=False) is None               # very first start: nothing
+    assert settings.get("last_seen_version") == APP_VERSION
+    settings.set_value("last_seen_version", "0.0.1")                  # the program was updated
+    updater.remember_for_next_start(dict(version=APP_VERSION, notes="- Popup", date="2026-11-25"))
+    e = updater.take_whats_new(fetch=False)
+    assert e["version"] == APP_VERSION and e["notes"] == "- Popup" and e["date"] == "2026-11-25"
+    assert updater.take_whats_new(fetch=False) is None                # only once
+    assert [h["version"] for h in updater.update_history()] == [APP_VERSION]
+    assert settings.get("whats_new_next") == {}
+
+
+def test_whats_new_after_a_manual_install_reads_the_notes_when_online(db, monkeypatch):
+    settings.set_value("last_seen_version", "0.0.1")
+    rel = release(APP_VERSION)
+    rel["body"] = BODY.replace("1.5.1", APP_VERSION)
+    rel["published_at"] = "2026-11-25T10:00:00Z"
+    monkeypatch.setattr(updater, "_get_json", lambda url, timeout=10: rel)
+    e = updater.take_whats_new()
+    assert "Popup" in e["notes"]
+
+    settings.set_value("last_seen_version", "0.0.2")                  # offline: still tells the person it was updated
+
+    def boom(url, timeout=10):
+        raise OSError("no internet")
+    monkeypatch.setattr(updater, "_get_json", boom)
+    e = updater.take_whats_new()
+    assert e["version"] == APP_VERSION and e["notes"] == ""
+
+
+def test_phone_is_told_the_notes_date_and_size(db):
+    phone = BackupPhone()
+    phone.pair(phonesync.new_link_code(1)["code"], name="Owner phone")
+    p, sha, data = _stage(db)
+    settings.set_value("phone_apk", dict(version=APP_VERSION, sha=sha, size=len(data), notes="- Popup", date="2026-11-25",
+                                         recommended=True))
+    up = phone.sync(full=True)["update"]
+    assert up["notes"] == "- Popup" and up["date"] == "2026-11-25" and up["recommended"] is True

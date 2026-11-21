@@ -3,6 +3,8 @@ package com.sdj.mobilecare
 import com.sdj.mobilecare.data.AppUpdate
 import com.sdj.mobilecare.data.Backups
 import com.sdj.mobilecare.data.Net
+import com.sdj.mobilecare.data.Repo
+import com.sdj.mobilecare.data.Store
 import com.sdj.mobilecare.data.isNewerVersion
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -83,5 +85,47 @@ class UpdateLogicTest {
         val r = testRepo(tmp.newFolder(), ApkNet(bytes))
         r.offerUpdate(m, "dev-1", ByteArray(32))
         assertEquals(AppUpdate.FAILED, r.update.value!!.state)
+    }
+
+    private val key = ByteArray(32) { it.toByte() }
+
+    @Test fun whatsNewShowsOnceAfterAnUpdateAndIsKeptInTheHistory() = runBlocking {
+        val dir = tmp.newFolder()
+        val bytes = ByteArray(3000) { (it % 251).toByte() }
+        val old = testRepo(dir, ApkNet(bytes), version = "0.0.1")
+        old.load()
+        assertNull(old.whatsNew.value)                                   // first start: nothing to show
+        old.offerUpdate(meta(bytes, "0.0.2").put("notes", "- Faster bills\n- Update popup").put("date", "2026-11-25").put("recommended", true), "dev", key)
+        val u = old.update.value!!
+        assertEquals(AppUpdate.READY, u.state)
+        assertEquals("2026-11-25", u.date)
+        assertTrue(u.recommended)
+        val now = Repo(Store(dir), OfflineNet(), kotlinx.coroutines.Dispatchers.Unconfined, "0.0.2")
+        now.load()
+        assertEquals("0.0.2", now.whatsNew.value!!.version)
+        assertTrue(now.whatsNew.value!!.notes.contains("Faster bills"))
+        now.dismissWhatsNew()
+        val again = Repo(Store(dir), OfflineNet(), kotlinx.coroutines.Dispatchers.Unconfined, "0.0.2")
+        again.load()
+        assertNull(again.whatsNew.value)                                 // only once
+        assertEquals(listOf("0.0.2"), again.updateHistory().map { it.version })
+    }
+
+    @Test fun laterAsksAgainTomorrow() = runBlocking {
+        val r = testRepo(tmp.newFolder())
+        assertFalse(r.updateSnoozed())
+        r.snoozeUpdate(24)
+        assertTrue(r.updateSnoozed())
+        r.snoozeUpdate(-1)
+        assertFalse(r.updateSnoozed())
+    }
+
+    @Test fun notificationIsAnnouncedOncePerVersion() = runBlocking {
+        val bytes = ByteArray(500) { 3 }
+        val r = testRepo(tmp.newFolder(), ApkNet(bytes), version = "0.0.1")
+        assertNull(r.takeUpdateNotice())                                 // nothing ready
+        r.offerUpdate(meta(bytes, "0.0.2"), "dev", key)
+        assertEquals("0.0.2", r.takeUpdateNotice()!!.version)
+        assertNull(r.takeUpdateNotice())                                 // not again
     }
 }

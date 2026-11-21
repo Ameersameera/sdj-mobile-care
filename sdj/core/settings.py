@@ -66,6 +66,10 @@ DEFAULTS: dict[str, Any] = {
     "update_last_check": "",
     "update_skip_version": "",
     "phone_apk": {},
+    "update_snooze_until": "",
+    "last_seen_version": "",
+    "whats_new_next": {},
+    "update_history": [],
     # ui
     "theme": "light",
     "expense_categories": EXPENSE_CATEGORIES,

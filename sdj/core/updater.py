@@ -91,6 +91,42 @@ def _asset_sha(rel: dict, asset: dict) -> str:
     return ""
 
 
+def section_notes(body: str, version: str, limit: int = 1800) -> str:
+    """Only this version's part of the release notes ("### What's new in X" up to the next version or Download)."""
+    body = (body or "").replace("\r\n", "\n").strip()
+    lines = body.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(rf"^#{{2,4}}\s*What's new in {re.escape(version)}\b", line.strip()):
+            start = i
+            break
+    if start is None:
+        return body[:limit]
+    out = []
+    for line in lines[start + 1:]:
+        t = line.strip()
+        if t.startswith("#") and (re.match(r"^#{2,4}\s*What's new in ", t) or re.match(r"^#{2,4}\s*Download", t)):
+            break
+        out.append(line)
+    return "\n".join(out).strip()[:limit]
+
+
+def is_recommended(notes: str) -> bool:
+    """A release marks an important update with the line 'Recommended: yes'."""
+    return bool(re.search(r"(?im)^\W*recommended\s*:\s*yes\b", notes or ""))
+
+
+def clean_notes(notes: str) -> str:
+    """Notes as plain text for the popup: no markdown marks, no 'Recommended' marker line."""
+    out = []
+    for line in (notes or "").splitlines():
+        if re.match(r"(?i)^\W*recommended\s*:", line):
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line).replace("**", "").replace("`", "")
+        out.append(line.rstrip())
+    return "\n".join(out).strip()
+
+
 def _describe(rel: dict) -> dict:
     tag = str(rel.get("tag_name") or "")
     ver = tag.lstrip("vV")
@@ -101,8 +137,10 @@ def _describe(rel: dict) -> dict:
             setup = a
         elif _APK_RE.match(n):
             apk = a
+    notes = section_notes(str(rel.get("body") or ""), ver)
     return dict(
-        version=ver, tag=tag, notes=str(rel.get("body") or "").strip(), page=str(rel.get("html_url") or RELEASES_PAGE),
+        version=ver, tag=tag, notes=clean_notes(notes), recommended=is_recommended(notes),
+        date=str(rel.get("published_at") or "")[:10], page=str(rel.get("html_url") or RELEASES_PAGE),
         setup=None if setup is None else dict(name=setup["name"], url=setup["browser_download_url"],
                                               size=int(setup.get("size") or 0), sha=_asset_sha(rel, setup)),
         apk=None if apk is None else dict(name=apk["name"], url=apk["browser_download_url"],
@@ -246,7 +284,9 @@ def staged_phone_apk() -> dict | None:
         p = phone_apk_path()
         meta = settings.get("phone_apk") or {}
         if p.exists() and meta.get("version") == APP_VERSION and meta.get("sha") and meta.get("size") == p.stat().st_size:
-            return dict(version=APP_VERSION, name=p.name, sha=meta["sha"], size=meta["size"], path=p)
+            return dict(version=APP_VERSION, name=p.name, sha=meta["sha"], size=meta["size"], path=p,
+                        notes=str(meta.get("notes") or ""), date=str(meta.get("date") or ""),
+                        recommended=bool(meta.get("recommended")))
     except Exception:
         log.exception("phone app copy check failed")
     return None
@@ -262,7 +302,8 @@ def stage_phone_apk() -> bool:
         if info["apk"] is None or info["version"] != APP_VERSION:
             return False
         path = download(info["apk"])
-        settings.set_value("phone_apk", dict(version=APP_VERSION, sha=info["apk"]["sha"], size=path.stat().st_size))
+        settings.set_value("phone_apk", dict(version=APP_VERSION, sha=info["apk"]["sha"], size=path.stat().st_size,
+                                             notes=info["notes"][:1500], date=info["date"], recommended=info["recommended"]))
         for old in updates_dir().glob("SDJMobileCare-Phone-*.apk"):
             if old != path:
                 old.unlink(missing_ok=True)
@@ -270,3 +311,59 @@ def stage_phone_apk() -> bool:
     except Exception as exc:
         log.info("could not save the phone app copy: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------- "Later" and "What's new after the update"
+def snooze(days: int = 1) -> None:
+    from datetime import datetime, timedelta
+    settings.set_value("update_snooze_until", (datetime.now() + timedelta(days=days)).isoformat(timespec="seconds"))
+
+
+def snoozed() -> bool:
+    from datetime import datetime
+    until = settings.get("update_snooze_until") or ""
+    try:
+        return bool(until) and datetime.now() < datetime.fromisoformat(until)
+    except ValueError:
+        return False
+
+
+def remember_for_next_start(latest: dict) -> None:
+    """Before installing: keep this version's notes so the new program can show 'What's new' when it opens."""
+    settings.set_value("whats_new_next", dict(version=latest["version"], notes=latest.get("notes") or "",
+                                              date=latest.get("date") or ""))
+
+
+def update_history() -> list[dict]:
+    return list(settings.get("update_history") or [])
+
+
+def take_whats_new(fetch: bool = True) -> dict | None:
+    """Called once after start. Returns {version, notes, date} the first time a NEW version opens, else None.
+    The very first start of a program (nothing remembered) shows nothing."""
+    from datetime import date as _date
+    last = settings.get("last_seen_version") or ""
+    if last == APP_VERSION:
+        return None
+    settings.set_value("last_seen_version", APP_VERSION)
+    nxt = settings.get("whats_new_next") or {}
+    entry = None
+    if nxt.get("version") == APP_VERSION:
+        entry = dict(version=APP_VERSION, notes=str(nxt.get("notes") or ""), date=str(nxt.get("date") or ""))
+    elif last and fetch:                       # installed by hand over an older version: read the notes if online
+        try:
+            info = _describe(_get_json(f"{API}/tags/v{APP_VERSION}"))
+            entry = dict(version=APP_VERSION, notes=info["notes"], date=info["date"])
+        except Exception as exc:
+            log.info("no release notes for the what's new card: %s", exc)
+            entry = dict(version=APP_VERSION, notes="", date="")
+    elif last:
+        entry = dict(version=APP_VERSION, notes="", date="")
+    if entry is None:
+        return None
+    if not entry["date"]:
+        entry["date"] = _date.today().isoformat()
+    hist = [h for h in update_history() if h.get("version") != APP_VERSION]
+    hist.insert(0, entry)
+    settings.set_many({"update_history": hist[:20], "whats_new_next": {}})
+    return entry

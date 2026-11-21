@@ -1072,7 +1072,8 @@ def _phone_update_for(app_version: str) -> dict | None:
         from . import updater
         apk = updater.staged_phone_apk()
         if apk and app_version and updater.is_newer(apk["version"], app_version):
-            return dict(version=apk["version"], size=apk["size"], sha=apk["sha"], name=apk["name"])
+            return dict(version=apk["version"], size=apk["size"], sha=apk["sha"], name=apk["name"],
+                        notes=apk.get("notes", ""), date=apk.get("date", ""), recommended=bool(apk.get("recommended")))
     except Exception:
         log.exception("phone update offer failed")
     return None
